@@ -10,6 +10,7 @@ User=root
 Group=root
 WorkingDirectory=/root/TrinityProxy
 Environment=TRINITY_ROLE=agent
+Environment=PATH=/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ExecStart=/root/TrinityProxy/build/trinityproxy
 ExecReload=/bin/kill -USR1 $MAINPID
 KillMode=mixed
