@@ -49,6 +49,8 @@ func getPublicIP() (string, error) {
 // getGeoInfo gets location data for an IP with multiple fallback services
 func getGeoInfo(ip string) (map[string]string, error) {
 	// Try multiple geo services as fallbacks
+
+	// Try multiple geo services as fallbacks
 	geoServices := []struct {
 		name string
 		url  string

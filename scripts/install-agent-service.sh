@@ -46,7 +46,7 @@ sed "s|/root/TrinityProxy|$PROJECT_ROOT|g" "$SERVICE_FILE" > "$SYSTEMD_PATH"
 chmod 644 "$SYSTEMD_PATH"
 
 # Reload systemd and enable service
-# Reload systemd and enable service
+
 echo "[*] Reloading systemd daemon..."
 systemctl daemon-reload
 
