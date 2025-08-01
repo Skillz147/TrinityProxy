@@ -413,25 +413,37 @@ ssh root@vps "cd TrinityProxy && make run-agent &"
 
 ## 🔧 Production Service Management
 
-### Systemd Background Service
+### One-Command VPS Setup
 
-For production deployments, install TrinityProxy Controller as a systemd service to run automatically in the background:
+TrinityProxy features intelligent, fully automated VPS deployment:
 
 ```bash
-# Install controller as background service
+# Complete VPS setup (everything automated)
+git clone https://github.com/Skillz147/TrinityProxy.git
 cd TrinityProxy
-sudo make install-service
+make vps-setup
+
+# Start controller (auto-installs nginx, SSL, systemd service)
+make run-controller
+
+# OR start agent (auto-installs dependencies)
+make run-agent
 ```
 
-This will:
+### What `make run-controller` Does Automatically
 
-- ✅ Build optimized binaries
-- ✅ Install systemd service file
-- ✅ Start service immediately
-- ✅ Enable auto-start on boot
-- ✅ Configure automatic restarts on failure
+When you run `make run-controller` on a VPS, it intelligently:
+
+- ✅ **Detects VPS environment** (Linux with systemd)
+- ✅ **Configures nginx + SSL** (if not already setup)
+- ✅ **Installs systemd service** (if not already installed)
+- ✅ **Starts background service** with auto-restart
+- ✅ **Enables boot startup** automatically
+- ✅ **Provides management commands**
 
 ### Service Management Commands
+
+Once installed, manage your TrinityProxy service with:
 
 ```bash
 # Check service status

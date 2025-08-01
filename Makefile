@@ -39,7 +39,6 @@ help:
 	@echo ""
 	@echo "VPS Deployment:"
 	@echo "  make setup-api-controller - Setup controller with SSL/NGINX"
-	@echo "  make install-service      - Install controller as systemd background service"
 	@echo "  make deploy-vps        - Deploy to VPS (set VPS_HOST variable)"
 	@echo "  make install-dante     - Install Dante SOCKS5 server only"
 	@echo "  make cleanup           - Remove old TrinityProxy installation"
@@ -180,7 +179,16 @@ run-controller: build
 		echo "[*] VPS detected without nginx config - setting up API controller with SSL..."; \
 		make setup-api-controller; \
 	fi
-	@export PATH="/usr/local/go/bin:$$PATH"; TRINITY_ROLE=controller ./$(BUILD_DIR)/$(BINARY_NAME)
+	@# Check if we should install as systemd service (VPS environment)
+	@if command -v systemctl >/dev/null 2>&1 && [ ! -f /etc/systemd/system/trinityproxy-controller.service ]; then \
+		echo "[*] Installing as systemd background service..."; \
+		make install-service; \
+		echo "[+] TrinityProxy Controller installed and running as background service!"; \
+		echo "[*] Use 'sudo systemctl status trinityproxy-controller' to check status"; \
+		echo "[*] Use 'sudo journalctl -u trinityproxy-controller -f' to view logs"; \
+	else \
+		export PATH="/usr/local/go/bin:$$PATH"; TRINITY_ROLE=controller ./$(BUILD_DIR)/$(BINARY_NAME); \
+	fi
 
 # Smart agent setup - handles all agent requirements automatically  
 run-agent: 
@@ -243,8 +251,8 @@ quickstart:
 	@echo "[5/5] Ready to run!"
 	@echo ""
 	@echo "🚀 SIMPLE USAGE:"
-	@echo "  make run-controller   - Start as API controller (handles all setup)"
-	@echo "  make run-agent        - Start as SOCKS5 proxy agent (handles all setup)"
+	@echo "  make run-controller   - Start as API controller (auto-installs everything)"
+	@echo "  make run-agent        - Start as SOCKS5 proxy agent (auto-installs everything)"
 	@echo "  make run              - Interactive selection"
 	@echo ""
 
@@ -268,9 +276,11 @@ vps-setup: setup-system quickstart
 	@echo "Your VPS is now ready to run TrinityProxy."
 	@echo ""
 	@echo "🚀 SIMPLE COMMANDS:"
-	@echo "  make run-controller   - Start as API controller (auto-configures nginx/SSL)"
-	@echo "  make run-agent        - Start as SOCKS5 proxy agent (auto-installs dependencies)"
+	@echo "  make run-controller   - Start as API controller (auto-installs nginx/SSL/systemd)"
+	@echo "  make run-agent        - Start as SOCKS5 proxy agent (auto-installs everything)"
 	@echo "  make run              - Interactive role selection"
+	@echo ""
+	@echo "💡 Everything is automatic - just choose your role!"
 	@echo ""
 
 # API Controller setup with SSL (uses setup_api.sh)
