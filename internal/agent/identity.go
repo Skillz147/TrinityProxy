@@ -5,8 +5,10 @@ package agent
 import (
 	"encoding/json"
 	"errors"
-	"io/ioutil"
+	"fmt"
+	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 )
@@ -24,7 +26,7 @@ type NodeMetadata struct {
 
 // readFile reads and trims content from a file
 func readFile(path string) (string, error) {
-	data, err := ioutil.ReadFile(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
 	}
@@ -38,7 +40,7 @@ func getPublicIP() (string, error) {
 		return "", err
 	}
 	defer resp.Body.Close()
-	ip, err := ioutil.ReadAll(resp.Body)
+	ip, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", err
 	}
@@ -53,12 +55,35 @@ func getGeoInfo(ip string) (map[string]string, error) {
 	}
 	defer resp.Body.Close()
 
-	var result map[string]string
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	var rawResult map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&rawResult); err != nil {
 		return nil, err
 	}
 
-	if result["country"] == "" {
+	// Convert all values to strings safely
+	result := make(map[string]string)
+	for key, value := range rawResult {
+		if value != nil {
+			switch v := value.(type) {
+			case string:
+				result[key] = v
+			case bool:
+				if v {
+					result[key] = "true"
+				} else {
+					result[key] = "false"
+				}
+			case float64:
+				result[key] = strconv.FormatFloat(v, 'f', -1, 64)
+			default:
+				result[key] = fmt.Sprintf("%v", v)
+			}
+		} else {
+			result[key] = ""
+		}
+	}
+
+	if result["country"] == "" && result["country_name"] == "" {
 		return nil, errors.New("geo lookup failed")
 	}
 
