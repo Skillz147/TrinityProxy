@@ -13,14 +13,15 @@ help:
 	@echo ""
 	@echo "🚀 SIMPLE COMMANDS (for users):"
 	@echo "  make run-controller    - Start as API controller (auto-installs nginx/SSL if needed)"
-	@echo "  make run-agent         - Start as SOCKS5 proxy agent (auto-installs dependencies)"
+	@echo "  make run-agent         - Complete agent setup (installs service, starts in background)"
 	@echo "  make run               - Interactive role selection"
 	@echo ""
 	@echo "📋 Available targets:"
 	@echo ""
 	@echo "Quick Setup:"
 	@echo "  make quickstart        - Standard setup (after system dependencies)"
-	@echo "  make vps-setup         - Complete VPS setup (includes system setup)"
+	@echo "  make vps-setup         - Complete VPS setup for CONTROLLER"
+	@echo "  make agent-setup       - Complete VPS setup for AGENT"
 	@echo "  make setup-system      - Install system dependencies (Go, Dante, etc.)"
 	@echo ""
 	@echo "Build & Dependencies:"
@@ -40,8 +41,11 @@ help:
 	@echo "VPS Deployment:"
 	@echo "  make setup-api-controller - Setup controller with SSL/NGINX"
 	@echo "  make install-service      - Install controller as systemd service"
-	@echo "  make start-service        - Start systemd service"
-	@echo "  make stop-service         - Stop systemd service"
+	@echo "  make install-agent-service - Install agent as systemd service"
+	@echo "  make start-service        - Start systemd controller service"
+	@echo "  make stop-service         - Stop systemd controller service"
+	@echo "  make start-agent-service  - Start systemd agent service"
+	@echo "  make stop-agent-service   - Stop systemd agent service"
 	@echo "  make deploy-vps        - Deploy to VPS (set VPS_HOST variable)"
 	@echo "  make install-dante     - Install Dante SOCKS5 server only"
 	@echo "  make cleanup           - Remove old TrinityProxy installation"
@@ -180,7 +184,7 @@ run-controller: build
 
 # Smart agent setup - handles all agent requirements automatically  
 run-agent: 
-	@echo "[*] Starting TrinityProxy in Agent mode..."
+	@echo "[*] Setting up TrinityProxy Agent (complete setup)..."
 	@echo "[*] Checking agent requirements..."
 	@# Ensure system dependencies are installed
 	@if ! command -v sockd >/dev/null 2>&1; then \
@@ -192,7 +196,28 @@ run-agent:
 		echo "[*] Building binaries..."; \
 		make build; \
 	fi
-	@export PATH="/usr/local/go/bin:$$PATH"; TRINITY_ROLE=agent ./$(BUILD_DIR)/$(BINARY_NAME)
+	@# Install as systemd service if not already installed
+	@if [ ! -f /etc/systemd/system/trinityproxy-agent.service ]; then \
+		echo "[*] Installing agent as systemd service..."; \
+		make install-agent-service; \
+	fi
+	@# Start the service
+	@echo "[*] Starting TrinityProxy Agent service..."
+	@sudo systemctl start trinityproxy-agent
+	@sleep 3
+	@echo ""
+	@if sudo systemctl is-active trinityproxy-agent >/dev/null 2>&1; then \
+		echo "🚀 SUCCESS! TrinityProxy Agent is running!"; \
+		echo ""; \
+		echo "✅ Agent Status: sudo systemctl status trinityproxy-agent"; \
+		echo "✅ View Logs: sudo journalctl -u trinityproxy-agent -f"; \
+		echo "✅ SOCKS5 proxy is active and reporting to controller"; \
+		echo ""; \
+		echo "🎯 Agent running in background via systemd service!"; \
+	else \
+		echo "❌ Agent service failed to start. Check logs:"; \
+		sudo journalctl -u trinityproxy-agent --no-pager -n 20; \
+	fi
 
 # Development helpers
 dev-controller: build
@@ -240,7 +265,7 @@ quickstart:
 	@echo ""
 	@echo "🚀 SIMPLE USAGE:"
 	@echo "  make run-controller   - Start as API controller (auto-installs everything)"
-	@echo "  make run-agent        - Start as SOCKS5 proxy agent (auto-installs everything)"
+	@echo "  make run-agent        - Complete agent setup (installs service, runs in background)"
 	@echo "  make run              - Interactive selection"
 	@echo ""
 
@@ -291,6 +316,32 @@ vps-setup: setup-system quickstart setup-api-controller install-service
 	fi
 	@echo ""
 
+# Agent VPS setup (system setup + agent service)
+agent-setup: setup-system quickstart install-agent-service
+	@echo ""
+	@echo "[+] Agent VPS Setup Complete!"
+	@echo "============================="
+	@echo "Starting TrinityProxy Agent service..."
+	@echo ""
+	@# Start the agent service
+	@echo "[*] Starting TrinityProxy Agent service..."
+	@sudo systemctl start trinityproxy-agent
+	@sleep 3
+	@echo ""
+	@if sudo systemctl is-active trinityproxy-agent >/dev/null 2>&1; then \
+		echo "🚀 SUCCESS! TrinityProxy Agent is running!"; \
+		echo ""; \
+		echo "✅ Agent Status: sudo systemctl status trinityproxy-agent"; \
+		echo "✅ View Logs: sudo journalctl -u trinityproxy-agent -f"; \
+		echo "✅ SOCKS5 proxy is active and reporting to controller"; \
+		echo ""; \
+		echo "🎯 Your Agent VPS is ready! SOCKS5 proxy running in background."; \
+	else \
+		echo "❌ Agent service failed to start. Check logs:"; \
+		sudo journalctl -u trinityproxy-agent --no-pager -n 20; \
+	fi
+	@echo ""
+
 # API Controller setup with SSL (uses setup_api.sh)
 setup-api-controller:
 	@if [ -f "scripts/setup_api.sh" ]; then \
@@ -315,6 +366,18 @@ install-service: build
 		exit 1; \
 	fi
 
+# Install agent as systemd service (runs in background)
+install-agent-service: build
+	@if [ -f "scripts/install-agent-service.sh" ]; then \
+		echo "[*] Installing TrinityProxy Agent as systemd service..."; \
+		chmod +x scripts/install-agent-service.sh; \
+		sudo bash scripts/install-agent-service.sh; \
+		echo "[+] TrinityProxy Agent service installed!"; \
+	else \
+		echo "[!] Agent service installation script not found."; \
+		exit 1; \
+	fi
+
 # Start/restart the systemd service
 start-service:
 	@if [ -f /etc/systemd/system/trinityproxy-controller.service ]; then \
@@ -334,6 +397,27 @@ stop-service:
 		echo "[+] Service stopped."; \
 	else \
 		echo "[!] Service not installed."; \
+	fi
+
+# Start/restart the agent systemd service
+start-agent-service:
+	@if [ -f /etc/systemd/system/trinityproxy-agent.service ]; then \
+		echo "[*] Starting TrinityProxy Agent service..."; \
+		sudo systemctl start trinityproxy-agent; \
+		sudo systemctl status trinityproxy-agent; \
+	else \
+		echo "[!] Agent service not installed. Run 'make install-agent-service' first."; \
+		exit 1; \
+	fi
+
+# Stop the agent systemd service
+stop-agent-service:
+	@if [ -f /etc/systemd/system/trinityproxy-agent.service ]; then \
+		echo "[*] Stopping TrinityProxy Agent service..."; \
+		sudo systemctl stop trinityproxy-agent; \
+		echo "[+] Agent service stopped."; \
+	else \
+		echo "[!] Agent service not installed."; \
 	fi
 
 # Version info

@@ -1,0 +1,31 @@
+[Unit]
+Description=TrinityProxy SOCKS5 Agent
+Documentation=https://github.com/Skillz147/TrinityProxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/root/TrinityProxy
+Environment=TRINITY_ROLE=agent
+ExecStart=/root/TrinityProxy/build/trinityproxy
+ExecReload=/bin/kill -USR1 $MAINPID
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=5
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Security settings
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/root/TrinityProxy /etc /var/log
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
