@@ -20,12 +20,5 @@ RestartSec=10
 StandardOutput=journal
 StandardError=journal
 
-# Security settings
-NoNewPrivileges=true
-ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=/root/TrinityProxy /etc /var/log
-PrivateTmp=true
-
 [Install]
 WantedBy=multi-user.target
