@@ -10,6 +10,7 @@ import (
 	"math/big"
 	"os"
 	"os/exec"
+	"strings"
 	"text/template"
 )
 
@@ -58,12 +59,13 @@ func generateCredentials() (string, string, int) {
 }
 
 func writeDanteConf(username, password string, port int) error {
-	conf := `
+	conf := `# Dante SOCKS5 Server Configuration
+
 logoutput: /var/log/danted.log
 internal: {{.Interface}} port = {{.Port}}
 external: {{.Interface}}
 
-method: username
+socksmethod: username
 user.notprivileged: {{.User}}
 
 client pass {
@@ -71,14 +73,12 @@ client pass {
   log: connect disconnect
 }
 
-pass {
+socks pass {
   from: 0.0.0.0/0 to: 0.0.0.0/0
   protocol: tcp udp
   command: connect
   log: connect disconnect
-  method: username
-  username: "{{.Username}}"
-  password: "{{.Password}}"
+  socksmethod: username
 }
 `
 	tmpl, err := template.New("danted").Parse(conf)
@@ -96,8 +96,6 @@ pass {
 		"Interface": danteInterface,
 		"Port":      port,
 		"User":      danteUser,
-		"Username":  username,
-		"Password":  password,
 	}
 
 	return tmpl.Execute(file, data)
@@ -119,6 +117,25 @@ WantedBy=multi-user.target
 	return os.WriteFile(serviceFile, []byte(service), 0644)
 }
 
+func createSystemUser(username, password string) error {
+	// Create system user for SOCKS authentication
+	cmd := exec.Command("useradd", "-r", "-s", "/bin/false", username)
+	if err := cmd.Run(); err != nil {
+		// User might already exist, that's okay
+		fmt.Printf("[*] User %s might already exist: %v\n", username, err)
+	}
+
+	// Set password for the user
+	cmd = exec.Command("chpasswd")
+	cmd.Stdin = strings.NewReader(username + ":" + password)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to set password for user %s: %v", username, err)
+	}
+
+	fmt.Printf("[+] Created system user: %s\n", username)
+	return nil
+}
+
 func reloadAndStartService() {
 	exec.Command("systemctl", "daemon-reexec").Run()
 	exec.Command("systemctl", "daemon-reload").Run()
@@ -133,6 +150,10 @@ func main() {
 
 	if err := writeDanteConf(username, password, port); err != nil {
 		log.Fatalf("[-] Failed to write danted.conf: %v", err)
+	}
+
+	if err := createSystemUser(username, password); err != nil {
+		log.Fatalf("[-] Failed to create system user: %v", err)
 	}
 
 	if err := writeSystemdService(); err != nil {
