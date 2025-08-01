@@ -1,7 +1,7 @@
 # TrinityProxy Makefile
 # Easy build and deployment for SOCKS5 proxy network
 
-.PHONY: help build clean install deps test run-controller run-agent setup-dev check-deps format lint setup-system vps-setup setup-api-controller quickstart debug cleanup
+.PHONY: help build clean install deps test run-controller run-agent setup-dev check-deps format lint setup-system vps-setup setup-api-controller quickstart debug cleanup install-service
 
 # Default target
 all: deps build
@@ -39,6 +39,7 @@ help:
 	@echo ""
 	@echo "VPS Deployment:"
 	@echo "  make setup-api-controller - Setup controller with SSL/NGINX"
+	@echo "  make install-service      - Install controller as systemd background service"
 	@echo "  make deploy-vps        - Deploy to VPS (set VPS_HOST variable)"
 	@echo "  make install-dante     - Install Dante SOCKS5 server only"
 	@echo "  make cleanup           - Remove old TrinityProxy installation"
@@ -282,6 +283,18 @@ setup-api-controller:
 	else \
 		echo "[!] API setup script not found. Using basic controller setup..."; \
 		make run-controller; \
+	fi
+
+# Install controller as systemd service (runs in background)
+install-service: build
+	@if [ -f "scripts/install-service.sh" ]; then \
+		echo "[*] Installing TrinityProxy Controller as systemd service..."; \
+		chmod +x scripts/install-service.sh; \
+		sudo bash scripts/install-service.sh; \
+		echo "[+] TrinityProxy Controller service installed!"; \
+	else \
+		echo "[!] Service installation script not found."; \
+		exit 1; \
 	fi
 
 # Version info

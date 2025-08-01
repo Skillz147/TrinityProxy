@@ -1,0 +1,19 @@
+[Unit]
+Description=TrinityProxy Controller API Server
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/TrinityProxy
+Environment=TRINITY_ROLE=controller
+Environment=PATH=/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/usr/local/go/bin/go run ./cmd/api/enhanced_main.go
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

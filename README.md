@@ -411,6 +411,77 @@ make deploy-vps VPS_HOST=root@your-vps.com
 ssh root@vps "cd TrinityProxy && make run-agent &"
 ```
 
+## 🔧 Production Service Management
+
+### Systemd Background Service
+
+For production deployments, install TrinityProxy Controller as a systemd service to run automatically in the background:
+
+```bash
+# Install controller as background service
+cd TrinityProxy
+sudo make install-service
+```
+
+This will:
+
+- ✅ Build optimized binaries
+- ✅ Install systemd service file
+- ✅ Start service immediately
+- ✅ Enable auto-start on boot
+- ✅ Configure automatic restarts on failure
+
+### Service Management Commands
+
+```bash
+# Check service status
+sudo systemctl status trinityproxy-controller
+
+# View live logs
+sudo journalctl -u trinityproxy-controller -f
+
+# Service control
+sudo systemctl start trinityproxy-controller     # Start
+sudo systemctl stop trinityproxy-controller      # Stop  
+sudo systemctl restart trinityproxy-controller   # Restart
+sudo systemctl enable trinityproxy-controller    # Enable auto-start
+sudo systemctl disable trinityproxy-controller   # Disable auto-start
+```
+
+### Service Features
+
+- **Auto-Recovery**: Automatically restarts on crashes
+- **Boot Integration**: Starts on system boot
+- **Logging**: Integrated with systemd journal
+- **Resource Management**: Proper process isolation
+- **Security**: Runs with appropriate permissions
+
+### API Endpoints (Background Service)
+
+Once the service is running, your API will be available at:
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `https://api.sauronstore.com/api/heartbeat` | POST | Agent heartbeat registration |
+| `https://api.sauronstore.com/api/nodes` | GET | List all proxy nodes |
+| `https://api.sauronstore.com/api/health` | GET | Controller health check |
+
+**Example heartbeat request:**
+```bash
+curl -X POST https://api.sauronstore.com/api/heartbeat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "ip": "1.2.3.4",
+    "port": 1080,
+    "username": "proxy_user",
+    "password": "proxy_pass",
+    "country": "US",
+    "region": "California", 
+    "city": "San Francisco",
+    "zip": "94102"
+  }'
+```
+
 ## 🎯 Use Cases
 
 ### 1. **Web Scraping Networks**
