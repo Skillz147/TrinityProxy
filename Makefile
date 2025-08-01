@@ -1,7 +1,7 @@
 # TrinityProxy Makefile
 # Easy build and deployment for SOCKS5 proxy network
 
-.PHONY: help build clean install deps test run-controller run-agent setup-dev check-deps format lint setup-system vps-setup setup-api-controller quickstart debug cleanup install-service
+.PHONY: help build clean install deps test run-controller run-agent setup-dev check-deps format lint setup-system vps-setup setup-api-controller quickstart debug cleanup install-service start-service stop-service
 
 # Default target
 all: deps build
@@ -39,6 +39,9 @@ help:
 	@echo ""
 	@echo "VPS Deployment:"
 	@echo "  make setup-api-controller - Setup controller with SSL/NGINX"
+	@echo "  make install-service      - Install controller as systemd service"
+	@echo "  make start-service        - Start systemd service"
+	@echo "  make stop-service         - Stop systemd service"
 	@echo "  make deploy-vps        - Deploy to VPS (set VPS_HOST variable)"
 	@echo "  make install-dante     - Install Dante SOCKS5 server only"
 	@echo "  make cleanup           - Remove old TrinityProxy installation"
@@ -173,22 +176,7 @@ run: build
 # Smart controller setup - handles all controller requirements automatically
 run-controller: build
 	@echo "[*] Starting TrinityProxy in Controller mode..."
-	@echo "[*] Checking controller requirements..."
-	@# Check if we're on a VPS and need nginx setup
-	@if command -v apt-get >/dev/null 2>&1 && [ ! -f /etc/nginx/sites-available/trinityproxy-api ]; then \
-		echo "[*] VPS detected without nginx config - setting up API controller with SSL..."; \
-		make setup-api-controller; \
-	fi
-	@# Check if we should install as systemd service (VPS environment)
-	@if command -v systemctl >/dev/null 2>&1 && [ ! -f /etc/systemd/system/trinityproxy-controller.service ]; then \
-		echo "[*] Installing as systemd background service..."; \
-		make install-service; \
-		echo "[+] TrinityProxy Controller installed and running as background service!"; \
-		echo "[*] Use 'sudo systemctl status trinityproxy-controller' to check status"; \
-		echo "[*] Use 'sudo journalctl -u trinityproxy-controller -f' to view logs"; \
-	else \
-		export PATH="/usr/local/go/bin:$$PATH"; TRINITY_ROLE=controller ./$(BUILD_DIR)/$(BINARY_NAME); \
-	fi
+	@export PATH="/usr/local/go/bin:$$PATH"; TRINITY_ROLE=controller ./$(BUILD_DIR)/$(BINARY_NAME)
 
 # Smart agent setup - handles all agent requirements automatically  
 run-agent: 
@@ -269,18 +257,38 @@ setup-system:
 	fi
 
 # VPS-specific quickstart (includes system setup)
-vps-setup: setup-system quickstart
+vps-setup: setup-system quickstart setup-api-controller install-service
 	@echo ""
 	@echo "[+] VPS Setup Complete!"
 	@echo "======================"
-	@echo "Your VPS is now ready to run TrinityProxy."
+	@echo "Checking port 3100 and starting TrinityProxy Controller..."
 	@echo ""
-	@echo "🚀 SIMPLE COMMANDS:"
-	@echo "  make run-controller   - Start as API controller (auto-installs nginx/SSL/systemd)"
-	@echo "  make run-agent        - Start as SOCKS5 proxy agent (auto-installs everything)"
-	@echo "  make run              - Interactive role selection"
+	@# Kill anything blocking port 3100
+	@if command -v lsof >/dev/null 2>&1; then \
+		BLOCKING_PID=$$(lsof -ti:3100 2>/dev/null); \
+		if [ ! -z "$$BLOCKING_PID" ]; then \
+			echo "[*] Killing process blocking port 3100 (PID: $$BLOCKING_PID)"; \
+			sudo kill -9 $$BLOCKING_PID 2>/dev/null || true; \
+			sleep 2; \
+		fi \
+	fi
+	@# Start the service
+	@echo "[*] Starting TrinityProxy Controller service..."
+	@sudo systemctl start trinityproxy-controller
+	@sleep 3
 	@echo ""
-	@echo "💡 Everything is automatic - just choose your role!"
+	@if sudo systemctl is-active trinityproxy-controller >/dev/null 2>&1; then \
+		echo "🚀 SUCCESS! TrinityProxy Controller is running!"; \
+		echo ""; \
+		echo "✅ API Available at: https://api.sauronstore.com"; \
+		echo "✅ Service Status: sudo systemctl status trinityproxy-controller"; \
+		echo "✅ View Logs: sudo journalctl -u trinityproxy-controller -f"; \
+		echo ""; \
+		echo "🎯 Your VPS is ready! Controller is running in background."; \
+	else \
+		echo "❌ Service failed to start. Check logs:"; \
+		sudo journalctl -u trinityproxy-controller --no-pager -n 20; \
+	fi
 	@echo ""
 
 # API Controller setup with SSL (uses setup_api.sh)
@@ -305,6 +313,27 @@ install-service: build
 	else \
 		echo "[!] Service installation script not found."; \
 		exit 1; \
+	fi
+
+# Start/restart the systemd service
+start-service:
+	@if [ -f /etc/systemd/system/trinityproxy-controller.service ]; then \
+		echo "[*] Starting TrinityProxy Controller service..."; \
+		sudo systemctl start trinityproxy-controller; \
+		sudo systemctl status trinityproxy-controller; \
+	else \
+		echo "[!] Service not installed. Run 'make install-service' first."; \
+		exit 1; \
+	fi
+
+# Stop the systemd service
+stop-service:
+	@if [ -f /etc/systemd/system/trinityproxy-controller.service ]; then \
+		echo "[*] Stopping TrinityProxy Controller service..."; \
+		sudo systemctl stop trinityproxy-controller; \
+		echo "[+] Service stopped."; \
+	else \
+		echo "[!] Service not installed."; \
 	fi
 
 # Version info
