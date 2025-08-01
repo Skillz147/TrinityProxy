@@ -7,7 +7,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"trinityproxy/internal/agent"
+	"github.com/Skillz147/TrinityProxy/internal/agent"
 )
 
 func runCommand(name string, args ...string) {
