@@ -3,6 +3,7 @@ package storage
 
 import (
 	"database/sql"
+	"fmt"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -73,7 +74,7 @@ func (s *NodeStorage) UpsertNode(node *ProxyNode) error {
 	VALUES (?, ?, ?, ?, ?, ?, ?, ?, true, ?, ?)
 	`
 
-	nodeID := node.IP + ":" + string(rune(node.Port))
+	nodeID := fmt.Sprintf("%s:%d", node.IP, node.Port)
 	now := time.Now()
 
 	_, err := s.db.Exec(query, nodeID, node.IP, node.Port, node.Username,
