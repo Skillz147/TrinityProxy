@@ -10,7 +10,13 @@ all: deps build
 help:
 	@echo "TrinityProxy Build System"
 	@echo "========================="
-	@echo "Available targets:"
+	@echo ""
+	@echo "🚀 SIMPLE COMMANDS (for users):"
+	@echo "  make run-controller    - Start as API controller (auto-installs nginx/SSL if needed)"
+	@echo "  make run-agent         - Start as SOCKS5 proxy agent (auto-installs dependencies)"
+	@echo "  make run               - Interactive role selection"
+	@echo ""
+	@echo "📋 Available targets:"
 	@echo ""
 	@echo "Quick Setup:"
 	@echo "  make quickstart        - Standard setup (after system dependencies)"
@@ -30,11 +36,6 @@ help:
 	@echo "  make format            - Format Go code"
 	@echo "  make lint              - Run linter"
 	@echo "  make check-deps        - Check system dependencies"
-	@echo ""
-	@echo "Runtime:"
-	@echo "  make run-controller    - Start in controller mode"
-	@echo "  make run-agent         - Start in agent mode"
-	@echo "  make run               - Interactive role selection"
 	@echo ""
 	@echo "VPS Deployment:"
 	@echo "  make setup-api-controller - Setup controller with SSL/NGINX"
@@ -169,12 +170,31 @@ run: build
 	@echo "[*] Starting TrinityProxy with interactive setup..."
 	@export PATH="/usr/local/go/bin:$$PATH"; ./$(BUILD_DIR)/$(BINARY_NAME)
 
+# Smart controller setup - handles all controller requirements automatically
 run-controller: build
 	@echo "[*] Starting TrinityProxy in Controller mode..."
+	@echo "[*] Checking controller requirements..."
+	@# Check if we're on a VPS and need nginx setup
+	@if command -v apt-get >/dev/null 2>&1 && [ ! -f /etc/nginx/sites-available/trinityproxy-api ]; then \
+		echo "[*] VPS detected without nginx config - setting up API controller with SSL..."; \
+		make setup-api-controller; \
+	fi
 	@export PATH="/usr/local/go/bin:$$PATH"; TRINITY_ROLE=controller ./$(BUILD_DIR)/$(BINARY_NAME)
 
-run-agent: build
+# Smart agent setup - handles all agent requirements automatically  
+run-agent: 
 	@echo "[*] Starting TrinityProxy in Agent mode..."
+	@echo "[*] Checking agent requirements..."
+	@# Ensure system dependencies are installed
+	@if ! command -v sockd >/dev/null 2>&1; then \
+		echo "[*] Installing required system dependencies..."; \
+		make setup-system; \
+	fi
+	@# Build if needed
+	@if [ ! -f "$(BUILD_DIR)/$(BINARY_NAME)" ]; then \
+		echo "[*] Building binaries..."; \
+		make build; \
+	fi
 	@export PATH="/usr/local/go/bin:$$PATH"; TRINITY_ROLE=agent ./$(BUILD_DIR)/$(BINARY_NAME)
 
 # Development helpers
@@ -221,10 +241,10 @@ quickstart:
 	@make build
 	@echo "[5/5] Ready to run!"
 	@echo ""
-	@echo "Next steps:"
-	@echo "  make run              - Interactive setup"
-	@echo "  make run-controller   - Start controller"
-	@echo "  make run-agent        - Start agent"
+	@echo "🚀 SIMPLE USAGE:"
+	@echo "  make run-controller   - Start as API controller (handles all setup)"
+	@echo "  make run-agent        - Start as SOCKS5 proxy agent (handles all setup)"
+	@echo "  make run              - Interactive selection"
 	@echo ""
 
 # Complete VPS setup (runs setup script)
@@ -246,9 +266,9 @@ vps-setup: setup-system quickstart
 	@echo "======================"
 	@echo "Your VPS is now ready to run TrinityProxy."
 	@echo ""
-	@echo "Quick commands:"
-	@echo "  make run-agent        - Start as SOCKS5 proxy agent"
-	@echo "  make run-controller   - Start as management controller"
+	@echo "🚀 SIMPLE COMMANDS:"
+	@echo "  make run-controller   - Start as API controller (auto-configures nginx/SSL)"
+	@echo "  make run-agent        - Start as SOCKS5 proxy agent (auto-installs dependencies)"
 	@echo "  make run              - Interactive role selection"
 	@echo ""
 

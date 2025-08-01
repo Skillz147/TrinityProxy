@@ -46,12 +46,30 @@ green "[✔] Configuration files removed"
 
 # Remove NGINX configuration (if exists)
 echo "[*] Removing NGINX configuration..."
-rm -f /etc/nginx/sites-available/trinityproxy-api
-rm -f /etc/nginx/sites-enabled/trinityproxy-api
-if command -v nginx >/dev/null 2>&1; then
-    nginx -t && systemctl reload nginx 2>/dev/null || true
+if [ -f "/etc/nginx/sites-available/trinityproxy-api" ]; then
+    rm -f /etc/nginx/sites-available/trinityproxy-api
+    green "[✔] NGINX site config removed"
+else
+    yellow "[!] NGINX site config not found (may not have been created)"
 fi
-green "[✔] NGINX configuration removed"
+
+if [ -L "/etc/nginx/sites-enabled/trinityproxy-api" ]; then
+    rm -f /etc/nginx/sites-enabled/trinityproxy-api
+    green "[✔] NGINX site symlink removed"
+else
+    yellow "[!] NGINX site symlink not found"
+fi
+
+if command -v nginx >/dev/null 2>&1; then
+    if nginx -t 2>/dev/null; then
+        systemctl reload nginx 2>/dev/null || true
+        green "[✔] NGINX reloaded successfully"
+    else
+        yellow "[!] NGINX config test failed, but continuing cleanup"
+    fi
+else
+    yellow "[!] NGINX not installed"
+fi
 
 # Remove log files
 echo "[*] Removing log files..."

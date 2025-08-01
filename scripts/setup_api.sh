@@ -14,7 +14,7 @@ ufw allow 443
 
 echo "[+] Configuring NGINX reverse proxy for $API_DOMAIN..."
 
-cat >/etc/nginx/sites-available/trinityproxy-api <<EOF
+cat >/etc/nginx/sites-available/trinityproxy-api <<NGINXEOF
 server {
     listen 80;
     server_name $API_DOMAIN;
@@ -31,14 +31,14 @@ server {
         proxy_cache_bypass \$http_upgrade;
     }
 }
-EOF
+NGINXEOF
 
 ln -s /etc/nginx/sites-available/trinityproxy-api /etc/nginx/sites-enabled/
 
 echo "[+] Testing and reloading NGINX..."
 nginx -t && systemctl reload nginx
 
-echo "[+] Requesting Let’s Encrypt cert for $API_DOMAIN..."
+echo "[+] Requesting Let's Encrypt cert for $API_DOMAIN..."
 certbot --nginx --non-interactive --agree-tos -m admin@$API_DOMAIN -d $API_DOMAIN
 
 echo "[+] Enabling auto-renewal..."
