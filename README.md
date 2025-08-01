@@ -63,20 +63,30 @@ TrinityProxy operates on a **Controller-Agent** architecture:
 - **SQLite3** (automatically installed)
 - **Dante SOCKS5 Server** (automatically installed)
 
-### One-Command Setup
+### One-Command VPS Setup
 
 ```bash
-# Clone and setup everything
+# Complete VPS setup from scratch (includes Go installation)
+git clone https://github.com/Skillz147/TrinityProxy.git
+cd TrinityProxy
+make vps-setup
+```
+
+This single command will:
+1. ✅ Install system dependencies (Go, Dante SOCKS5, build tools)
+2. ✅ Check all dependencies
+3. ✅ Install Go modules
+4. ✅ Build all binaries
+5. ✅ Prepare the VPS environment
+
+### Development Setup (if Go is already installed)
+
+```bash
+# Quick setup when Go is already available
 git clone https://github.com/Skillz147/TrinityProxy.git
 cd TrinityProxy
 make quickstart
 ```
-
-This single command will:
-1. ✅ Check all dependencies
-2. ✅ Install Go modules
-3. ✅ Build all binaries
-4. ✅ Prepare the development environment
 
 ## 📋 Installation & Deployment
 
@@ -362,21 +372,19 @@ TrinityProxy/
 # Controller Server (e.g., your main server)
 git clone https://github.com/Skillz147/TrinityProxy.git
 cd TrinityProxy  
-make quickstart
-make run-controller
+make vps-setup
+make setup-api-controller  # Optional: Setup with SSL/NGINX
 
 # Agent VPS #1 (e.g., US East Coast)
 git clone https://github.com/Skillz147/TrinityProxy.git
 cd TrinityProxy
-make quickstart
-sudo make install
+make vps-setup
 CONTROLLER_URL=http://controller-ip:8080 make run-agent
 
 # Agent VPS #2 (e.g., EU West)  
 git clone https://github.com/Skillz147/TrinityProxy.git
 cd TrinityProxy
-make quickstart
-sudo make install
+make vps-setup
 CONTROLLER_URL=http://controller-ip:8080 make run-agent
 ```
 

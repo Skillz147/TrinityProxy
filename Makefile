@@ -1,7 +1,7 @@
 # TrinityProxy Makefile
 # Easy build and deployment for SOCKS5 proxy network
 
-.PHONY: help build clean install deps test run-controller run-agent setup-dev check-deps format lint
+.PHONY: help build clean install deps test run-controller run-agent setup-dev check-deps format lint setup-system vps-setup setup-api-controller quickstart
 
 # Default target
 all: deps build
@@ -12,27 +12,34 @@ help:
 	@echo "========================="
 	@echo "Available targets:"
 	@echo ""
-	@echo "  make all           - Install dependencies and build everything"
-	@echo "  make build         - Build all binaries"
-	@echo "  make deps          - Install Go dependencies"
-	@echo "  make install       - Install system dependencies (requires sudo)"
-	@echo "  make clean         - Clean build artifacts"
+	@echo "Quick Setup:"
+	@echo "  make quickstart        - Standard setup (after system dependencies)"
+	@echo "  make vps-setup         - Complete VPS setup (includes system setup)"
+	@echo "  make setup-system      - Install system dependencies (Go, Dante, etc.)"
+	@echo ""
+	@echo "Build & Dependencies:"
+	@echo "  make all               - Install dependencies and build everything"
+	@echo "  make build             - Build all binaries"
+	@echo "  make deps              - Install Go dependencies"
+	@echo "  make install           - Install system dependencies (requires sudo)"
+	@echo "  make clean             - Clean build artifacts"
 	@echo ""
 	@echo "Development:"
-	@echo "  make setup-dev     - Complete development setup"
-	@echo "  make test          - Run tests"
-	@echo "  make format        - Format Go code"
-	@echo "  make lint          - Run linter"
-	@echo "  make check-deps    - Check system dependencies"
+	@echo "  make setup-dev         - Complete development setup"
+	@echo "  make test              - Run tests"
+	@echo "  make format            - Format Go code"
+	@echo "  make lint              - Run linter"
+	@echo "  make check-deps        - Check system dependencies"
 	@echo ""
 	@echo "Runtime:"
-	@echo "  make run-controller - Start in controller mode"
-	@echo "  make run-agent     - Start in agent mode"
-	@echo "  make run           - Interactive role selection"
+	@echo "  make run-controller    - Start in controller mode"
+	@echo "  make run-agent         - Start in agent mode"
+	@echo "  make run               - Interactive role selection"
 	@echo ""
-	@echo "Deployment:"
-	@echo "  make deploy-vps    - Deploy to VPS (set VPS_HOST variable)"
-	@echo "  make install-dante - Install Dante SOCKS5 server"
+	@echo "VPS Deployment:"
+	@echo "  make setup-api-controller - Setup controller with SSL/NGINX"
+	@echo "  make deploy-vps        - Deploy to VPS (set VPS_HOST variable)"
+	@echo "  make install-dante     - Install Dante SOCKS5 server only"
 
 # Variables
 BINARY_NAME=trinityproxy
@@ -196,22 +203,58 @@ deploy-vps:
 quickstart:
 	@echo "TrinityProxy Quick Start"
 	@echo "======================="
-	@echo "[1/4] Checking dependencies..."
+	@echo "[1/5] Setting up system dependencies..."
+	@make setup-system
+	@echo "[2/5] Checking dependencies..."
 	@make check-deps
-	@echo "[2/4] Installing Go dependencies..."
+	@echo "[3/5] Installing Go dependencies..."
 	@make deps
-	@echo "[3/4] Building binaries..."
+	@echo "[4/5] Building binaries..."
 	@make build
-	@echo "[4/4] Ready to run!"
+	@echo "[5/5] Ready to run!"
 	@echo ""
 	@echo "Next steps:"
 	@echo "  make run              - Interactive setup"
 	@echo "  make run-controller   - Start controller"
 	@echo "  make run-agent        - Start agent"
 	@echo ""
-	@echo "For VPS deployment:"
-	@echo "  sudo make install     - Install system dependencies"
+
+# Complete VPS setup (runs setup script)
+setup-system:
+	@if [ -f "scripts/setup.sh" ]; then \
+		echo "[*] Running system setup script..."; \
+		chmod +x scripts/setup.sh; \
+		sudo bash scripts/setup.sh; \
+		echo "[+] System setup complete!"; \
+	else \
+		echo "[!] Setup script not found. Installing basic dependencies..."; \
+		make install; \
+	fi
+
+# VPS-specific quickstart (includes system setup)
+vps-setup: setup-system quickstart
 	@echo ""
+	@echo "[+] VPS Setup Complete!"
+	@echo "======================"
+	@echo "Your VPS is now ready to run TrinityProxy."
+	@echo ""
+	@echo "Quick commands:"
+	@echo "  make run-agent        - Start as SOCKS5 proxy agent"
+	@echo "  make run-controller   - Start as management controller"
+	@echo "  make run              - Interactive role selection"
+	@echo ""
+
+# API Controller setup with SSL (uses setup_api.sh)
+setup-api-controller:
+	@if [ -f "scripts/setup_api.sh" ]; then \
+		echo "[*] Setting up API controller with SSL..."; \
+		chmod +x scripts/setup_api.sh; \
+		sudo bash scripts/setup_api.sh; \
+		echo "[+] API controller setup complete!"; \
+	else \
+		echo "[!] API setup script not found. Using basic controller setup..."; \
+		make run-controller; \
+	fi
 
 # Version info
 version:

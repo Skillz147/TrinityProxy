@@ -13,14 +13,16 @@ if command -v go >/dev/null 2>&1; then
   green "[✔] Go is already installed: $(go version)"
 else
   yellow "[!] Go not found. Installing..."
-  GO_VERSION=1.22.3
+  GO_VERSION=1.24.3
   cd /tmp
   wget https://go.dev/dl/go$GO_VERSION.linux-amd64.tar.gz
   rm -rf /usr/local/go
   tar -C /usr/local -xzf go$GO_VERSION.linux-amd64.tar.gz
   echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.profile
-  source ~/.profile
-  green "[✔] Go installed: $(go version)"
+  echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
+  export PATH=$PATH:/usr/local/go/bin
+  source ~/.profile 2>/dev/null || true
+  green "[✔] Go installed: $(/usr/local/go/bin/go version)"
 fi
 
 # Check Dante
