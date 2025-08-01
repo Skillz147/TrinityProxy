@@ -1,7 +1,7 @@
 # TrinityProxy Makefile
 # Easy build and deployment for SOCKS5 proxy network
 
-.PHONY: help build clean install deps test run-controller run-agent setup-dev check-deps format lint setup-system vps-setup setup-api-controller quickstart
+.PHONY: help build clean install deps test run-controller run-agent setup-dev check-deps format lint setup-system vps-setup setup-api-controller quickstart debug
 
 # Default target
 all: deps build
@@ -49,7 +49,7 @@ INSTALLER_BINARY=$(BUILD_DIR)/installer
 API_BINARY=$(BUILD_DIR)/api
 
 # Go build flags
-LDFLAGS=-ldflags "-X main.Version=$(shell git describe --tags --always --dirty 2>/dev/null || echo 'dev')"
+LDFLAGS=-ldflags "-X main.Version=$(shell export PATH="/usr/local/go/bin:$$PATH"; git describe --tags --always --dirty 2>/dev/null || echo 'dev')"
 
 # Build all binaries
 build: $(BUILD_DIR)/$(BINARY_NAME) $(INSTALLER_BINARY) $(API_BINARY)
@@ -61,17 +61,17 @@ build: $(BUILD_DIR)/$(BINARY_NAME) $(INSTALLER_BINARY) $(API_BINARY)
 # Build main binary
 $(BUILD_DIR)/$(BINARY_NAME): $(GO_FILES) | $(BUILD_DIR)
 	@echo "[*] Building main binary..."
-	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) .
+	@export PATH="/usr/local/go/bin:$$PATH"; go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) .
 
 # Build installer binary
 $(INSTALLER_BINARY): cmd/installer/installer.go | $(BUILD_DIR)
 	@echo "[*] Building installer..."
-	go build $(LDFLAGS) -o $(INSTALLER_BINARY) ./cmd/installer
+	@export PATH="/usr/local/go/bin:$$PATH"; go build $(LDFLAGS) -o $(INSTALLER_BINARY) ./cmd/installer
 
 # Build API server binary
 $(API_BINARY): cmd/api/enhanced_main.go | $(BUILD_DIR)
 	@echo "[*] Building API server..."
-	go build $(LDFLAGS) -o $(API_BINARY) ./cmd/api
+	@export PATH="/usr/local/go/bin:$$PATH"; go build $(LDFLAGS) -o $(API_BINARY) ./cmd/api
 
 # Create build directory
 $(BUILD_DIR):
@@ -80,8 +80,8 @@ $(BUILD_DIR):
 # Install Go dependencies
 deps:
 	@echo "[*] Installing Go dependencies..."
-	go mod download
-	go mod tidy
+	@export PATH="/usr/local/go/bin:$$PATH"; go mod download
+	@export PATH="/usr/local/go/bin:$$PATH"; go mod tidy
 	@echo "[+] Dependencies installed!"
 
 # Install system dependencies (Ubuntu/Debian)
@@ -118,7 +118,13 @@ install: install-dante
 # Check if required dependencies are available
 check-deps:
 	@echo "[*] Checking dependencies..."
-	@command -v go >/dev/null 2>&1 || (echo "[-] Go is not installed!" && exit 1)
+	@export PATH="/usr/local/go/bin:$$PATH"; \
+	if command -v go >/dev/null 2>&1; then \
+		echo "[+] Go found: $$(go version)"; \
+	else \
+		echo "[-] Go is not installed!"; \
+		exit 1; \
+	fi
 	@command -v git >/dev/null 2>&1 || (echo "[-] Git is not installed!" && exit 1)
 	@command -v sqlite3 >/dev/null 2>&1 || echo "[!] SQLite3 not found - run 'make install'"
 	@command -v sockd >/dev/null 2>&1 || echo "[!] Dante server not found - run 'make install-dante'"
@@ -132,18 +138,19 @@ setup-dev: deps build check-deps
 # Run tests
 test:
 	@echo "[*] Running tests..."
-	go test -v ./...
+	@export PATH="/usr/local/go/bin:$$PATH"; go test -v ./...
 
 # Format Go code
 format:
 	@echo "[*] Formatting Go code..."
-	go fmt ./...
+	@export PATH="/usr/local/go/bin:$$PATH"; go fmt ./...
 	@echo "[+] Code formatted!"
 
 # Run linter (requires golangci-lint)
 lint:
 	@echo "[*] Running linter..."
-	@if command -v golangci-lint >/dev/null 2>&1; then \
+	@export PATH="/usr/local/go/bin:$$PATH"; \
+	if command -v golangci-lint >/dev/null 2>&1; then \
 		golangci-lint run; \
 	else \
 		echo "[!] golangci-lint not found. Install with: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest"; \
@@ -153,21 +160,21 @@ lint:
 clean:
 	@echo "[*] Cleaning build artifacts..."
 	rm -rf $(BUILD_DIR)
-	go clean
+	@export PATH="/usr/local/go/bin:$$PATH"; go clean
 	@echo "[+] Clean complete!"
 
 # Runtime targets
 run: build
 	@echo "[*] Starting TrinityProxy with interactive setup..."
-	./$(BUILD_DIR)/$(BINARY_NAME)
+	@export PATH="/usr/local/go/bin:$$PATH"; ./$(BUILD_DIR)/$(BINARY_NAME)
 
 run-controller: build
 	@echo "[*] Starting TrinityProxy in Controller mode..."
-	TRINITY_ROLE=controller ./$(BUILD_DIR)/$(BINARY_NAME)
+	@export PATH="/usr/local/go/bin:$$PATH"; TRINITY_ROLE=controller ./$(BUILD_DIR)/$(BINARY_NAME)
 
 run-agent: build
 	@echo "[*] Starting TrinityProxy in Agent mode..."
-	TRINITY_ROLE=agent ./$(BUILD_DIR)/$(BINARY_NAME)
+	@export PATH="/usr/local/go/bin:$$PATH"; TRINITY_ROLE=agent ./$(BUILD_DIR)/$(BINARY_NAME)
 
 # Development helpers
 dev-controller: build
@@ -260,7 +267,7 @@ setup-api-controller:
 version:
 	@echo "TrinityProxy Build System"
 	@echo "Git Version: $(shell git describe --tags --always --dirty 2>/dev/null || echo 'dev')"
-	@echo "Go Version: $(shell go version)"
+	@export PATH="/usr/local/go/bin:$$PATH"; echo "Go Version: $$(go version 2>/dev/null || echo 'Go not found')"
 	@echo "Build Date: $(shell date)"
 
 # Show project status
@@ -270,5 +277,18 @@ status:
 	@echo "Repository: $(shell git remote get-url origin 2>/dev/null || echo 'No remote')"
 	@echo "Branch: $(shell git branch --show-current 2>/dev/null || echo 'No git')"
 	@echo "Last Commit: $(shell git log -1 --pretty=format:'%h - %s (%cr)' 2>/dev/null || echo 'No commits')"
-	@echo "Go Modules: $(shell go list -m all | wc -l) dependencies"
+	@export PATH="/usr/local/go/bin:$$PATH"; echo "Go Modules: $$(go list -m all 2>/dev/null | wc -l || echo 'N/A') dependencies"
 	@echo "Build Status: $(shell [ -f $(BUILD_DIR)/$(BINARY_NAME) ] && echo 'Built' || echo 'Not built')"
+
+# Debug PATH and environment
+debug:
+	@echo "TrinityProxy Debug Information"
+	@echo "============================="
+	@echo "Current PATH: $$PATH"
+	@echo "Go in PATH: $$(command -v go 2>/dev/null || echo 'Not found')"
+	@echo "Go in /usr/local/go/bin: $$(ls -la /usr/local/go/bin/go 2>/dev/null || echo 'Not found')"
+	@export PATH="/usr/local/go/bin:$$PATH"; echo "Go with updated PATH: $$(command -v go 2>/dev/null || echo 'Not found')"
+	@export PATH="/usr/local/go/bin:$$PATH"; echo "Go version: $$(go version 2>/dev/null || echo 'Not accessible')"
+	@echo "Sockd in PATH: $$(command -v sockd 2>/dev/null || echo 'Not found')"
+	@echo "Current directory: $$(pwd)"
+	@echo "User: $$(whoami)"
