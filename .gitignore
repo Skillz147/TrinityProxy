@@ -1,0 +1,40 @@
+# Build artifacts
+build/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Go artifacts
+*.test
+*.out
+coverage.txt
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment files
+.env
+.env.local
+.env.production
+
+# Logs
+*.log
+logs/
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Temporary files
+tmp/
+temp/
