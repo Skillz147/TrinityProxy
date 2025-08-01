@@ -37,9 +37,10 @@ if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
     systemctl stop "$SERVICE_NAME"
 fi
 
-# Copy service file
+# Copy service file and update paths
 echo "[*] Installing service file..."
-cp "$SERVICE_FILE" "$SYSTEMD_PATH"
+# Create a temporary service file with correct paths
+sed "s|/root/TrinityProxy|$PROJECT_ROOT|g" "$SERVICE_FILE" > "$SYSTEMD_PATH"
 
 # Set correct permissions
 chmod 644 "$SYSTEMD_PATH"
