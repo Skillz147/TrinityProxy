@@ -65,7 +65,8 @@ logoutput: /var/log/danted.log
 internal: {{.Interface}} port = {{.Port}}
 external: {{.Interface}}
 
-socksmethod: username
+# Support both username authentication and no authentication
+socksmethod: username none
 user.notprivileged: {{.User}}
 
 client pass {
@@ -73,12 +74,22 @@ client pass {
   log: connect disconnect
 }
 
+# Allow authenticated connections
 socks pass {
   from: 0.0.0.0/0 to: 0.0.0.0/0
   protocol: tcp udp
   command: connect
   log: connect disconnect
   socksmethod: username
+}
+
+# Allow anonymous connections
+socks pass {
+  from: 0.0.0.0/0 to: 0.0.0.0/0
+  protocol: tcp udp
+  command: connect
+  log: connect disconnect
+  socksmethod: none
 }
 `
 	tmpl, err := template.New("danted").Parse(conf)
