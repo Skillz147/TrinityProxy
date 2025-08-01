@@ -1,7 +1,7 @@
 # TrinityProxy Makefile
 # Easy build and deployment for SOCKS5 proxy network
 
-.PHONY: help build clean install deps test run-controller run-agent setup-dev check-deps format lint setup-system vps-setup setup-api-controller quickstart debug
+.PHONY: help build clean install deps test run-controller run-agent setup-dev check-deps format lint setup-system vps-setup setup-api-controller quickstart debug cleanup
 
 # Default target
 all: deps build
@@ -40,6 +40,7 @@ help:
 	@echo "  make setup-api-controller - Setup controller with SSL/NGINX"
 	@echo "  make deploy-vps        - Deploy to VPS (set VPS_HOST variable)"
 	@echo "  make install-dante     - Install Dante SOCKS5 server only"
+	@echo "  make cleanup           - Remove old TrinityProxy installation"
 
 # Variables
 BINARY_NAME=trinityproxy
@@ -290,5 +291,21 @@ debug:
 	@export PATH="/usr/local/go/bin:$$PATH"; echo "Go with updated PATH: $$(command -v go 2>/dev/null || echo 'Not found')"
 	@export PATH="/usr/local/go/bin:$$PATH"; echo "Go version: $$(go version 2>/dev/null || echo 'Not accessible')"
 	@echo "Sockd in PATH: $$(command -v sockd 2>/dev/null || echo 'Not found')"
-	@echo "Current directory: $$(pwd)"
+	@echo "[*] Current directory: $$(pwd)"
 	@echo "User: $$(whoami)"
+
+# Remove old TrinityProxy installation
+cleanup:
+	@if [ -f "scripts/cleanup.sh" ]; then \
+		echo "[*] Running TrinityProxy cleanup script..."; \
+		chmod +x scripts/cleanup.sh; \
+		sudo bash scripts/cleanup.sh; \
+	else \
+		echo "[-] Cleanup script not found at scripts/cleanup.sh"; \
+		echo "[*] Manual cleanup instructions:"; \
+		echo "  sudo systemctl stop trinityproxy"; \
+		echo "  sudo systemctl disable trinityproxy"; \
+		echo "  sudo rm -f /etc/systemd/system/trinityproxy.service"; \
+		echo "  sudo rm -f /etc/danted.conf /etc/trinityproxy-*"; \
+		echo "  sudo rm -rf /root/TrinityProxy ~/TrinityProxy"; \
+	fi

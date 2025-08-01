@@ -180,7 +180,7 @@ func main() {
 		fmt.Fprint(w, "ok")
 	})
 
-	log.Println("[*] Enhanced API server listening on :3000")
+	log.Println("[*] Enhanced API server listening on :3100")
 	log.Println("[*] Available endpoints:")
 	log.Println("    POST /api/heartbeat     - Node heartbeat")
 	log.Println("    GET  /api/nodes         - List all online nodes")
@@ -188,7 +188,7 @@ func main() {
 	log.Println("    GET  /api/nodes/random  - Get random node")
 	log.Println("    GET  /health            - Health check")
 
-	if err := http.ListenAndServe(":3000", nil); err != nil {
+	if err := http.ListenAndServe(":3100", nil); err != nil {
 		log.Fatalf("[-] API server failed: %v", err)
 	}
 }
