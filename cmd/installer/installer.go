@@ -112,13 +112,43 @@ socks pass {
 	return tmpl.Execute(file, data)
 }
 
+func findDanteBinary() string {
+	// Check common Dante binary locations and names
+	candidates := []string{
+		"/usr/sbin/danted", // Ubuntu/Debian
+		"/usr/sbin/sockd",  // CentOS/RHEL/AlmaLinux
+		"/usr/bin/danted",  // Alternative location
+		"/usr/bin/sockd",   // Alternative location
+	}
+
+	for _, path := range candidates {
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+	}
+
+	// Fallback to PATH search
+	if path, err := exec.LookPath("danted"); err == nil {
+		return path
+	}
+	if path, err := exec.LookPath("sockd"); err == nil {
+		return path
+	}
+
+	// Default fallback
+	return "/usr/sbin/sockd"
+}
+
 func writeSystemdService() error {
+	danteBinary := findDanteBinary()
+	fmt.Printf("[*] Using Dante binary: %s\n", danteBinary)
+
 	service := `[Unit]
 Description=TrinityProxy SOCKS5 Service
 After=network.target
 
 [Service]
-ExecStart=/usr/sbin/sockd -f /etc/danted.conf
+ExecStart=` + danteBinary + ` -f /etc/danted.conf
 Restart=always
 RestartSec=3
 
