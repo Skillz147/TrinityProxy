@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"math/big"
+	"net"
 	"os"
 	"os/exec"
 	"strings"
@@ -15,14 +16,13 @@ import (
 )
 
 const (
-	serviceName    = "trinityproxy"
-	confPath       = "/etc/danted.conf"
-	usernamePath   = "/etc/trinityproxy-username"
-	passwordPath   = "/etc/trinityproxy-password"
-	portPath       = "/etc/trinityproxy-port"
-	serviceFile    = "/etc/systemd/system/trinityproxy.service"
-	danteUser      = "nobody"
-	danteInterface = "eth0"
+	serviceName  = "trinityproxy"
+	confPath     = "/etc/danted.conf"
+	usernamePath = "/etc/trinityproxy-username"
+	passwordPath = "/etc/trinityproxy-password"
+	portPath     = "/etc/trinityproxy-port"
+	serviceFile  = "/etc/systemd/system/trinityproxy.service"
+	danteUser    = "nobody"
 )
 
 // Generate secure hex string
@@ -46,6 +46,83 @@ func getRandomPort() int {
 	return int(start + n.Int64())
 }
 
+// detectPrimaryInterface finds the primary network interface
+func detectPrimaryInterface() string {
+	// Method 1: Use ip route to find default gateway interface
+	cmd := exec.Command("ip", "route", "show", "default")
+	output, err := cmd.Output()
+	if err == nil {
+		lines := strings.Split(string(output), "\n")
+		for _, line := range lines {
+			if strings.Contains(line, "default via") {
+				fields := strings.Fields(line)
+				for i, field := range fields {
+					if field == "dev" && i+1 < len(fields) {
+						iface := fields[i+1]
+						fmt.Printf("[*] Detected primary interface: %s (via ip route)\n", iface)
+						return iface
+					}
+				}
+			}
+		}
+	}
+
+	// Method 2: Find interface with default route using route command
+	cmd = exec.Command("route", "-n")
+	output, err = cmd.Output()
+	if err == nil {
+		lines := strings.Split(string(output), "\n")
+		for _, line := range lines {
+			if strings.HasPrefix(line, "0.0.0.0") {
+				fields := strings.Fields(line)
+				if len(fields) >= 8 {
+					iface := fields[7]
+					fmt.Printf("[*] Detected primary interface: %s (via route)\n", iface)
+					return iface
+				}
+			}
+		}
+	}
+
+	// Method 3: Use Go's net package to find interface with global unicast address
+	interfaces, err := net.Interfaces()
+	if err == nil {
+		for _, iface := range interfaces {
+			if iface.Flags&net.FlagUp != 0 && iface.Flags&net.FlagLoopback == 0 {
+				addrs, err := iface.Addrs()
+				if err == nil {
+					for _, addr := range addrs {
+						if ipnet, ok := addr.(*net.IPNet); ok {
+							if ipnet.IP.IsGlobalUnicast() && ipnet.IP.To4() != nil {
+								fmt.Printf("[*] Detected primary interface: %s (via Go net)\n", iface.Name)
+								return iface.Name
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Method 4: Check common interface names
+	commonNames := []string{"ens5", "ens3", "enp0s3", "enp0s5", "eth0", "ens160"}
+	for _, name := range commonNames {
+		if _, err := os.Stat("/sys/class/net/" + name); err == nil {
+			// Check if interface is up
+			cmd := exec.Command("ip", "link", "show", name)
+			output, err := cmd.Output()
+			if err == nil && strings.Contains(string(output), "state UP") {
+				fmt.Printf("[*] Detected primary interface: %s (fallback check)\n", name)
+				return name
+			}
+		}
+	}
+
+	// Final fallback
+	fmt.Printf("[!] Could not detect interface, using fallback: eth0\n")
+	return "eth0"
+}
+
 func generateCredentials() (string, string, int) {
 	username := "u_" + GenerateRandomString(4)
 	password := GenerateRandomString(12)
@@ -59,6 +136,8 @@ func generateCredentials() (string, string, int) {
 }
 
 func writeDanteConf(username, password string, port int) error {
+	danteInterface := detectPrimaryInterface()
+
 	conf := `# Dante SOCKS5 Server Configuration
 
 logoutput: /var/log/danted.log
