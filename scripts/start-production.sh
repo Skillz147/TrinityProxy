@@ -273,9 +273,8 @@ run_as_root bash -c "
 	cd '$ROOT'
 	# shellcheck source=scripts/lib/production-common.sh
 	source '$ROOT/scripts/lib/production-common.sh'
+	production_ensure_bootstrap_prereqs
 	production_ensure_controller_env
-	production_ensure_trinityproxy_user
-	production_ensure_state_dir
 "
 
 build_all

@@ -19,6 +19,7 @@ production_is_dev_install() {
 }
 
 production_install_binaries() {
+	production_ensure_trinityproxy_user
 	local project_root="$1"
 	shift
 	local name src
@@ -444,6 +445,12 @@ production_ensure_trinityproxy_user() {
 	production_create_system_user "$DASHBOARD_USER" "$STATE_DIR"
 }
 
+production_ensure_bootstrap_prereqs() {
+	production_ensure_trinityproxy_user
+	production_ensure_state_dir
+}
+
+
 # Remove system user created for production (idempotent).
 production_remove_system_user() {
 	local user="${1:-$DASHBOARD_USER}"
@@ -473,6 +480,7 @@ production_remove_system_user() {
 
 
 production_ensure_state_dir() {
+	production_ensure_trinityproxy_user
 	local install_bin
 	install_bin="$(production_resolve_cmd install)" || {
 		echo "[-] Error: install not found" >&2
@@ -498,6 +506,7 @@ production_fixup_state_dir() {
 
 
 production_ensure_controller_env() {
+	production_ensure_trinityproxy_user
 	echo "[*] Preparing controller secrets..."
 	local install_bin chmod_bin chown_bin
 	install_bin="$(production_resolve_cmd install)" || {
