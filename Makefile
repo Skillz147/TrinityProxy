@@ -423,7 +423,7 @@ sync-agent-key:
 
 # Regenerate dashboard admin credentials (production: sudo make reset-dashboard-admin)
 reset-dashboard-admin reset-admin:
-	@chmod +x scripts/reset-dashboard-admin.sh
+	@chmod +x scripts/reset-dashboard-admin.sh scripts/lib/production-common.sh
 	@./scripts/reset-dashboard-admin.sh
 
 # Bootstrap initial dashboard admin (prints temp credentials once)

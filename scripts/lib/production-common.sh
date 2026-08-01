@@ -160,6 +160,86 @@ production_systemctl() {
 	"$bin" "$@"
 }
 
+# Stop/start systemd units with a wall-clock timeout (avoids hung reset/install scripts).
+production_systemctl_stop_unit() {
+	local unit="$1"
+	local wait_secs="${2:-45}"
+	local bin main_pid i
+	bin="$(production_resolve_cmd systemctl)" || return 1
+
+	if ! "$bin" is-active --quiet "$unit" 2>/dev/null; then
+		return 0
+	fi
+
+	echo "[*] Stopping $unit (timeout ${wait_secs}s)..."
+	if command -v timeout >/dev/null 2>&1; then
+		timeout "$wait_secs" "$bin" stop "$unit" 2>/dev/null || true
+	else
+		"$bin" stop --no-block "$unit" 2>/dev/null || true
+		i=0
+		while [[ $i -lt $wait_secs ]] && "$bin" is-active --quiet "$unit" 2>/dev/null; do
+			sleep 1
+			i=$((i + 1))
+		done
+	fi
+
+	if ! "$bin" is-active --quiet "$unit" 2>/dev/null; then
+		echo "[+] $unit stopped."
+		return 0
+	fi
+
+	echo "[!] $unit still active after ${wait_secs}s; forcing stop..."
+	main_pid="$("$bin" show -p MainPID --value "$unit" 2>/dev/null || echo 0)"
+	if [[ "$main_pid" =~ ^[0-9]+$ ]] && [[ "$main_pid" -gt 0 ]]; then
+		kill -TERM "$main_pid" 2>/dev/null || true
+		sleep 2
+		if "$bin" is-active --quiet "$unit" 2>/dev/null; then
+			kill -KILL "$main_pid" 2>/dev/null || true
+		fi
+	fi
+	"$bin" kill -s SIGKILL "$unit" 2>/dev/null || true
+	"$bin" reset-failed "$unit" 2>/dev/null || true
+	if command -v timeout >/dev/null 2>&1; then
+		timeout 15 "$bin" stop "$unit" 2>/dev/null || true
+	else
+		"$bin" stop "$unit" 2>/dev/null || true
+	fi
+
+	if "$bin" is-active --quiet "$unit" 2>/dev/null; then
+		echo "[-] Error: failed to stop $unit" >&2
+		return 1
+	fi
+	echo "[+] $unit stopped (forced)."
+}
+
+production_systemctl_start_unit() {
+	local unit="$1"
+	local wait_secs="${2:-60}"
+	local bin i
+	bin="$(production_resolve_cmd systemctl)" || return 1
+
+	if "$bin" is-active --quiet "$unit" 2>/dev/null; then
+		return 0
+	fi
+
+	echo "[*] Starting $unit (timeout ${wait_secs}s)..."
+	if command -v timeout >/dev/null 2>&1; then
+		if timeout "$wait_secs" "$bin" start "$unit"; then
+			echo "[+] $unit started."
+			return 0
+		fi
+	else
+		if "$bin" start "$unit"; then
+			echo "[+] $unit started."
+			return 0
+		fi
+	fi
+
+	echo "[-] Warning: systemctl start $unit did not complete within ${wait_secs}s (check: systemctl status $unit)" >&2
+	return 1
+}
+
+
 production_find_adduser() {
 	local p
 	for p in /usr/sbin/adduser /sbin/adduser; do
