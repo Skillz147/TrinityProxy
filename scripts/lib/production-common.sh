@@ -123,19 +123,71 @@ production_random_hex() {
 	"$openssl_bin" rand -hex 32
 }
 
+production_is_loopback_ipv4() {
+	local ip="$1"
+	[[ "$ip" == 127.* ]]
+}
+
 production_detect_primary_ip() {
-	local ip="" hostname_bin awk_bin ip_bin
+	local ip="" hostname_bin awk_bin ip_bin curl_bin addr
 	hostname_bin="$(production_resolve_cmd hostname 2>/dev/null || true)"
 	awk_bin="$(production_resolve_cmd awk 2>/dev/null || true)"
 	ip_bin="$(production_resolve_cmd ip 2>/dev/null || true)"
+	curl_bin="$(production_resolve_cmd curl 2>/dev/null || true)"
 
-	if [[ -n "$hostname_bin" && -n "$awk_bin" ]]; then
-		ip="$("$hostname_bin" -I 2>/dev/null | "$awk_bin" '{print $1}')"
+	if [[ -n "$hostname_bin" ]]; then
+		for addr in $($hostname_bin -I 2>/dev/null); do
+			[[ -z "$addr" ]] && continue
+			production_is_loopback_ipv4 "$addr" && continue
+			ip="$addr"
+			break
+		done
 	fi
 	if [[ -z "$ip" && -n "$ip_bin" && -n "$awk_bin" ]]; then
 		ip="$("$ip_bin" -4 route get 1.1.1.1 2>/dev/null | "$awk_bin" '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}')"
+		production_is_loopback_ipv4 "$ip" && ip=""
+	fi
+	if [[ -z "$ip" && -n "$curl_bin" ]]; then
+		ip="$("$curl_bin" -4 -sS --connect-timeout 3 --max-time 5 ifconfig.me 2>/dev/null | tr -d '[:space:]')"
+		if [[ ! "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+			ip=""
+		fi
 	fi
 	echo "$ip"
+}
+
+# Host clients should use in URLs (IPv4 preferred, else hostname -f).
+production_resolve_access_host() {
+	local ip host hostname_bin
+	ip="$(production_detect_primary_ip)"
+	if [[ -n "$ip" ]]; then
+		echo "$ip"
+		return 0
+	fi
+	hostname_bin="$(production_resolve_cmd hostname 2>/dev/null || true)"
+	if [[ -n "$hostname_bin" ]]; then
+		host="$("$hostname_bin" -f 2>/dev/null || true)"
+		if [[ -n "$host" && "$host" != "localhost" ]]; then
+			echo "$host"
+			return 0
+		fi
+		host="$("$hostname_bin" 2>/dev/null || true)"
+		if [[ -n "$host" ]]; then
+			echo "$host"
+			return 0
+		fi
+	fi
+	return 1
+}
+
+production_http_url() {
+	local port="$1"
+	local host
+	if host="$(production_resolve_access_host)"; then
+		echo "http://${host}:${port}"
+	else
+		echo "http://127.0.0.1:${port}"
+	fi
 }
 
 production_read_env_value() {
@@ -218,13 +270,7 @@ production_ensure_controller_env() {
 	[[ -n "$agent_key" ]] || agent_key="$(production_random_hex)"
 
 	if [[ -z "$controller_url" ]]; then
-		local ip
-		ip="$(production_detect_primary_ip)"
-		if [[ -n "$ip" ]]; then
-			controller_url="http://${ip}:${API_PORT}"
-		else
-			controller_url="http://127.0.0.1:${API_PORT}"
-		fi
+		controller_url="$(production_http_url "$API_PORT")"
 	fi
 
 	cat >"$CONTROLLER_ENV" <<EOF
@@ -288,13 +334,8 @@ production_init_dashboard_admin() {
 	production_ensure_trinityproxy_user
 	production_ensure_state_dir
 
-	local ip dashboard_url
-	ip="$(production_detect_primary_ip)"
-	if [[ -n "$ip" ]]; then
-		dashboard_url="http://${ip}:${DASHBOARD_PORT}"
-	else
-		dashboard_url="http://127.0.0.1:${DASHBOARD_PORT}"
-	fi
+	local dashboard_url
+	dashboard_url="$(production_http_url "$DASHBOARD_PORT")"
 
 	set -a
 	# shellcheck disable=SC1090
@@ -346,14 +387,19 @@ production_print_dashboard_login_banner() {
 	echo "  DASHBOARD LOGIN — save these credentials"
 	echo "$sep"
 	if [[ "${PRODUCTION_DASHBOARD_ADMIN_CREATED:-}" == "1" ]]; then
+		local dash_url="${PRODUCTION_DASHBOARD_URL:-}"
+		if [[ -z "$dash_url" || "$dash_url" == *"<"* ]]; then
+			dash_url="$(production_http_url "$DASHBOARD_PORT")"
+		fi
 		echo ""
-		echo "  Dashboard URL:  ${PRODUCTION_DASHBOARD_URL}"
+		echo "  Dashboard URL:  ${dash_url}"
 		echo "  Username:       ${PRODUCTION_DASHBOARD_USERNAME}"
 		echo "  Password:       ${PRODUCTION_DASHBOARD_PASSWORD}"
 		echo ""
 		echo "  First login requires a password change."
 	else
 		echo ""
+		echo "  Dashboard URL:  $(production_http_url "$DASHBOARD_PORT")"
 		echo "  Dashboard admin already exists — no new password was generated."
 		echo "  Use your existing password or reset the dashboard database."
 	fi
@@ -362,8 +408,10 @@ production_print_dashboard_login_banner() {
 
 
 production_print_summary() {
-	local ip
-	ip="$(production_detect_primary_ip)"
+	local dash_url api_url ip_detected
+	dash_url="$(production_http_url "$DASHBOARD_PORT")"
+	api_url="$(production_http_url "$API_PORT")"
+	ip_detected="$(production_detect_primary_ip)"
 	echo ""
 	echo "============================================"
 	echo "  TrinityProxy production bootstrap complete"
@@ -376,14 +424,13 @@ production_print_summary() {
 	if production_caddy_active; then
 		echo "Dashboard URL: https://<your-domain> (Caddy reverse proxy active)"
 		echo "Controller API:  https://api.<your-domain> (via Caddy)"
-		echo "  (Direct HTTP:  http://${ip:-127.0.0.1}:${DASHBOARD_PORT})"
+		echo "  (Direct HTTP:  ${dash_url})"
 	else
-		if [[ -n "$ip" ]]; then
-			echo "Dashboard URL: http://${ip}:${DASHBOARD_PORT}"
-		else
-			echo "Dashboard URL: http://127.0.0.1:${DASHBOARD_PORT}"
+		echo "Dashboard URL: ${dash_url}"
+		echo "Controller API:  ${api_url}"
+		if [[ -z "$ip_detected" ]]; then
+			echo "  (No IPv4 auto-detected — if the URL is wrong, run: hostname -I)"
 		fi
-		echo "Controller API:  http://${ip:-127.0.0.1}:${API_PORT}"
 		echo ""
 		echo "HTTPS: Settings → Cloudflare SSL in dashboard, or:"
 		echo "  sudo ./scripts/setup-ssl-caddy-cloudflare.sh"

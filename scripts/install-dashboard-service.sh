@@ -112,7 +112,7 @@ fi
 echo "[+] TrinityProxy Dashboard installed as systemd service!"
 echo ""
 echo "Runtime user: $DASHBOARD_USER"
-echo "Dashboard API + UI: http://<your-vps-ip>:8081"
+echo "Dashboard API + UI: $(production_http_url "${DASHBOARD_PORT:-8081}")"
 echo "Put Caddy/nginx in front for HTTPS on your domain (see README)."
 echo ""
 echo "  sudo systemctl status trinityproxy-dashboard"
