@@ -241,6 +241,31 @@ func (s *Store) Logout(token string) error {
 	return nil
 }
 
+func (s *Store) TouchSession(token string) error {
+	if token == "" {
+		return ErrSessionNotFound
+	}
+
+	tokenHash := hashToken(token)
+	expiresAt := time.Now().UTC().Add(s.sessionTTL)
+	res, err := s.db.Exec(`
+		UPDATE dashboard_sessions
+		SET expires_at = ?
+		WHERE token_hash = ? AND expires_at > ?
+	`, expiresAt, tokenHash, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrSessionNotFound
+	}
+	return nil
+}
+
 func (s *Store) ValidateSession(token string) (*User, error) {
 	if token == "" {
 		return nil, ErrSessionNotFound

@@ -29,7 +29,8 @@ func (m *Middleware) ExtractToken(r *http.Request) string {
 	if len(auth) >= len(prefix) && strings.EqualFold(auth[:len(prefix)], prefix) {
 		return strings.TrimSpace(auth[len(prefix):])
 	}
-	return ""
+
+	return ExtractSessionCookie(r)
 }
 
 func (m *Middleware) RequireAuth(next http.HandlerFunc) http.HandlerFunc {

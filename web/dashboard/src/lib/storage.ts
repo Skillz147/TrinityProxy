@@ -1,9 +1,5 @@
 const TOKEN_KEY = "trinityproxy_auth_token";
 
-function isSecureContext(): boolean {
-  return typeof window !== "undefined" && window.isSecureContext;
-}
-
 export function getStoredToken(): string | null {
   try {
     return localStorage.getItem(TOKEN_KEY);
@@ -13,11 +9,10 @@ export function getStoredToken(): string | null {
 }
 
 export function setStoredToken(token: string): void {
-  if (!isSecureContext()) return;
   try {
     localStorage.setItem(TOKEN_KEY, token);
   } catch {
-    // Cookie-only auth when storage is unavailable.
+    // HttpOnly session cookie is the primary auth mechanism.
   }
 }
 

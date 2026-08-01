@@ -40,6 +40,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setToken(storedToken);
 
     try {
+      // Session cookie is sent via credentials: "include"; Bearer header is optional fallback.
       const session = await meRequest(storedToken);
       if (session?.user) {
         setUser(session.user);
@@ -50,10 +51,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     setUser(null);
-    if (storedToken) {
-      clearStoredToken();
-      setToken(null);
-    }
+    clearStoredToken();
+    setToken(null);
   }, []);
 
   useEffect(() => {
