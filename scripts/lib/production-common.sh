@@ -120,6 +120,29 @@ production_find_useradd() {
 	production_resolve_cmd useradd
 }
 
+production_find_deluser() {
+	local p
+	for p in /usr/sbin/deluser /sbin/deluser; do
+		if [[ -x "$p" ]]; then
+			echo "$p"
+			return 0
+		fi
+	done
+	production_resolve_cmd deluser 2>/dev/null || return 1
+}
+
+production_find_userdel() {
+	local p
+	for p in /usr/sbin/userdel /sbin/userdel; do
+		if [[ -x "$p" ]]; then
+			echo "$p"
+			return 0
+		fi
+	done
+	production_resolve_cmd userdel 2>/dev/null || return 1
+}
+
+
 production_have_user_mgmt() {
 	production_find_adduser >/dev/null 2>&1 || production_find_useradd >/dev/null 2>&1
 }
@@ -246,6 +269,34 @@ production_create_system_user() {
 production_ensure_trinityproxy_user() {
 	production_create_system_user "$DASHBOARD_USER" "$STATE_DIR"
 }
+
+# Remove system user created for production (idempotent).
+production_remove_system_user() {
+	local user="${1:-$DASHBOARD_USER}"
+	local id_bin deluser_bin userdel_bin
+	id_bin="$(production_resolve_cmd id 2>/dev/null || true)"
+	[[ -n "$id_bin" ]] || return 1
+	if ! "$id_bin" "$user" &>/dev/null; then
+		return 0
+	fi
+	echo "[*] Removing system user: $user"
+	deluser_bin="$(production_find_deluser 2>/dev/null || true)"
+	userdel_bin="$(production_find_userdel 2>/dev/null || true)"
+	if [[ -n "$deluser_bin" ]]; then
+		if "$deluser_bin" --remove-home "$user" 2>/dev/null; then
+			return 0
+		fi
+		"$deluser_bin" "$user" 2>/dev/null && return 0
+	elif [[ -n "$userdel_bin" ]]; then
+		if "$userdel_bin" -r "$user" 2>/dev/null; then
+			return 0
+		fi
+		"$userdel_bin" "$user" 2>/dev/null && return 0
+	fi
+	echo "[-] Error: could not remove user $user (deluser/userdel failed)" >&2
+	return 1
+}
+
 
 production_ensure_state_dir() {
 	local install_bin
@@ -428,6 +479,7 @@ production_print_dashboard_login_banner() {
 		echo "  Dashboard URL:  $(production_http_url "$DASHBOARD_PORT")"
 		echo "  Dashboard admin already exists — no new password was generated."
 		echo "  Use your existing password or reset the dashboard database."
+		echo "  Fresh credentials: sudo make uninstall-production && sudo make start"
 	fi
 	echo "$sep"
 }
