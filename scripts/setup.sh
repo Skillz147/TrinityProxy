@@ -1,5 +1,11 @@
 #!/bin/bash
 
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=scripts/lib/production-common.sh
+source "$ROOT/scripts/lib/production-common.sh"
+
 echo "[+] Starting TrinityProxy setup..."
 
 set -e  # Exit if any command fails
@@ -15,7 +21,7 @@ detect_os() {
         . /etc/os-release
         OS=$NAME
         VER=$VERSION_ID
-    elif type lsb_release >/dev/null 2>&1; then
+    elif production_resolve_cmd lsb_release >/dev/null 2>&1; then
         OS=$(lsb_release -si)
         VER=$(lsb_release -sr)
     elif [ -f /etc/redhat-release ]; then
@@ -32,22 +38,29 @@ detect_os() {
 # Install package based on OS
 install_package() {
     local package=$1
-    
-    if command -v apt-get >/dev/null 2>&1; then
+    local apt_get yum dnf pacman apk
+
+    apt_get="$(production_resolve_cmd apt-get 2>/dev/null || true)"
+    yum="$(production_resolve_cmd yum 2>/dev/null || true)"
+    dnf="$(production_resolve_cmd dnf 2>/dev/null || true)"
+    pacman="$(production_resolve_cmd pacman 2>/dev/null || true)"
+    apk="$(production_resolve_cmd apk 2>/dev/null || true)"
+
+    if [[ -n "$apt_get" ]]; then
         yellow "[*] Installing $package with apt-get..."
-        apt-get update -y && apt-get install -y "$package" || return 1
-    elif command -v yum >/dev/null 2>&1; then
+        "$apt_get" update -y && "$apt_get" install -y "$package" || return 1
+    elif [[ -n "$yum" ]]; then
         yellow "[*] Installing $package with yum..."
-        yum install -y "$package" || return 1
-    elif command -v dnf >/dev/null 2>&1; then
+        "$yum" install -y "$package" || return 1
+    elif [[ -n "$dnf" ]]; then
         yellow "[*] Installing $package with dnf..."
-        dnf install -y "$package" || return 1
-    elif command -v pacman >/dev/null 2>&1; then
+        "$dnf" install -y "$package" || return 1
+    elif [[ -n "$pacman" ]]; then
         yellow "[*] Installing $package with pacman..."
-        pacman -S --noconfirm "$package" || return 1
-    elif command -v apk >/dev/null 2>&1; then
+        "$pacman" -S --noconfirm "$package" || return 1
+    elif [[ -n "$apk" ]]; then
         yellow "[*] Installing $package with apk..."
-        apk add --no-cache "$package" || return 1
+        "$apk" add --no-cache "$package" || return 1
     else
         red "[-] No supported package manager found!"
         red "[-] Please install $package manually"
@@ -57,24 +70,24 @@ install_package() {
 
 # Update PATH and make it persistent
 update_go_path() {
-    export PATH="/usr/local/go/bin:$PATH"
+    export PATH="/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
     
     # Update for current session
     if [ -f ~/.bashrc ]; then
         if ! grep -q "/usr/local/go/bin" ~/.bashrc; then
-            echo 'export PATH="/usr/local/go/bin:$PATH"' >> ~/.bashrc
+            echo 'export PATH="/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"' >> ~/.bashrc
         fi
     fi
     
     if [ -f ~/.profile ]; then
         if ! grep -q "/usr/local/go/bin" ~/.profile; then
-            echo 'export PATH="/usr/local/go/bin:$PATH"' >> ~/.profile
+            echo 'export PATH="/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"' >> ~/.profile
         fi
     fi
     
     # For systems that use /etc/profile.d/
     if [ -d /etc/profile.d ]; then
-        echo 'export PATH="/usr/local/go/bin:$PATH"' > /etc/profile.d/go.sh
+        echo 'export PATH="/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"' > /etc/profile.d/go.sh
         chmod +x /etc/profile.d/go.sh
     fi
 }
@@ -82,7 +95,7 @@ update_go_path() {
 detect_os
 
 # Check Go with updated PATH first
-export PATH="/usr/local/go/bin:$PATH"
+export PATH="/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
 if command -v go >/dev/null 2>&1; then
   green "[✔] Go is already installed: $(go version)"
 else
@@ -131,22 +144,22 @@ else
   yellow "[!] Dante not found. Installing (optional for controller-only VPS)..."
 
   DANTE_OK=0
-  if command -v apt-get >/dev/null 2>&1; then
+  if production_resolve_cmd apt-get >/dev/null 2>&1; then
     # Debian 13+ may not ship dante-server — try alternatives, then continue without it
     for pkg in dante-server dante dante-server-standalone; do
       if install_dante "$pkg"; then DANTE_OK=1; break; fi
     done
-  elif command -v yum >/dev/null 2>&1; then
+  elif production_resolve_cmd yum >/dev/null 2>&1; then
     for pkg in dante dante-server; do
       if install_dante "$pkg"; then DANTE_OK=1; break; fi
     done
-  elif command -v dnf >/dev/null 2>&1; then
+  elif production_resolve_cmd dnf >/dev/null 2>&1; then
     for pkg in dante dante-server; do
       if install_dante "$pkg"; then DANTE_OK=1; break; fi
     done
-  elif command -v pacman >/dev/null 2>&1; then
+  elif production_resolve_cmd pacman >/dev/null 2>&1; then
     if install_dante "dante"; then DANTE_OK=1; fi
-  elif command -v apk >/dev/null 2>&1; then
+  elif production_resolve_cmd apk >/dev/null 2>&1; then
     for pkg in dante-server dante; do
       if install_dante "$pkg"; then DANTE_OK=1; break; fi
     done
@@ -167,20 +180,20 @@ fi
 essential_tools=("curl" "wget" "git" "make")
 
 # Add build tools based on package manager
-if command -v apt-get >/dev/null 2>&1; then
+if production_resolve_cmd apt-get >/dev/null 2>&1; then
     essential_tools+=("build-essential")
-elif command -v yum >/dev/null 2>&1; then
+elif production_resolve_cmd yum >/dev/null 2>&1; then
     essential_tools+=("gcc" "gcc-c++" "make")
-elif command -v dnf >/dev/null 2>&1; then
+elif production_resolve_cmd dnf >/dev/null 2>&1; then
     essential_tools+=("gcc" "gcc-c++" "make")
-elif command -v pacman >/dev/null 2>&1; then
+elif production_resolve_cmd pacman >/dev/null 2>&1; then
     essential_tools+=("base-devel")
-elif command -v apk >/dev/null 2>&1; then
+elif production_resolve_cmd apk >/dev/null 2>&1; then
     essential_tools+=("build-base")
 fi
 
 for tool in "${essential_tools[@]}"; do
-  if command -v "$tool" >/dev/null 2>&1 || dpkg -s "$tool" >/dev/null 2>&1; then
+  if command -v "$tool" >/dev/null 2>&1 || { dpkg_bin="$(production_resolve_cmd dpkg 2>/dev/null || true)"; [[ -n "$dpkg_bin" ]] && "$dpkg_bin" -s "$tool" >/dev/null 2>&1; }; then
     green "[✔] $tool is installed"
   else
     yellow "[!] $tool not found. Installing..."
@@ -190,21 +203,21 @@ for tool in "${essential_tools[@]}"; do
 done
 
 # User management (systemd service users on minimal images)
-if command -v adduser >/dev/null 2>&1 || command -v useradd >/dev/null 2>&1; then
+if production_have_user_mgmt; then
   green "[✔] adduser/useradd is available"
 else
   yellow "[!] adduser/useradd not found. Installing..."
-  if command -v apt-get >/dev/null 2>&1; then
+  if production_resolve_cmd apt-get >/dev/null 2>&1; then
     install_package adduser || install_package passwd || true
-  elif command -v yum >/dev/null 2>&1 || command -v dnf >/dev/null 2>&1; then
+  elif production_resolve_cmd yum >/dev/null 2>&1 || production_resolve_cmd dnf >/dev/null 2>&1; then
     install_package shadow-utils || true
-  elif command -v apk >/dev/null 2>&1; then
+  elif production_resolve_cmd apk >/dev/null 2>&1; then
     install_package shadow || true
   fi
 fi
 
 # OpenSSL (secret generation)
-if command -v openssl >/dev/null 2>&1; then
+if production_resolve_cmd openssl >/dev/null 2>&1; then
   green "[✔] openssl is installed"
 else
   yellow "[!] openssl not found. Installing..."
@@ -212,17 +225,17 @@ else
 fi
 
 # SQLite CLI (agent key sync, dashboard DB inspection)
-if command -v sqlite3 >/dev/null 2>&1; then
+if production_resolve_cmd sqlite3 >/dev/null 2>&1; then
   green "[✔] sqlite3 is installed"
 else
   yellow "[!] sqlite3 not found. Installing..."
-  if command -v apt-get >/dev/null 2>&1; then
+  if production_resolve_cmd apt-get >/dev/null 2>&1; then
     install_package sqlite3
-  elif command -v yum >/dev/null 2>&1 || command -v dnf >/dev/null 2>&1; then
+  elif production_resolve_cmd yum >/dev/null 2>&1 || production_resolve_cmd dnf >/dev/null 2>&1; then
     install_package sqlite
-  elif command -v pacman >/dev/null 2>&1; then
+  elif production_resolve_cmd pacman >/dev/null 2>&1; then
     install_package sqlite
-  elif command -v apk >/dev/null 2>&1; then
+  elif production_resolve_cmd apk >/dev/null 2>&1; then
     install_package sqlite
   else
     yellow "[!] Install sqlite3 manually for production key sync"

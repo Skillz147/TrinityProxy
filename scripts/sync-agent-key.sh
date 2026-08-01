@@ -16,10 +16,13 @@
 # Fallback order when dashboard DB/table/key is missing:
 #   TRINITY_AGENT_KEY env → .env file → write template with generation instructions
 
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+# shellcheck source=scripts/lib/production-common.sh
+source "$ROOT/scripts/lib/production-common.sh"
 
 DASHBOARD_DB="${DASHBOARD_DB_PATH:-./dashboard.db}"
 OUTPUT="${CONTROLLER_ENV_FILE:-.env.controller}"
@@ -33,7 +36,9 @@ KEY=""
 
 read_key_from_dashboard_db() {
 	local db_path="$1"
-	if ! command -v sqlite3 >/dev/null 2>&1; then
+	local sqlite3_bin
+	sqlite3_bin="$(production_resolve_cmd sqlite3 2>/dev/null || true)"
+	if [[ -z "$sqlite3_bin" ]]; then
 		return 1
 	fi
 	if [[ ! -f "$db_path" ]]; then
@@ -41,13 +46,13 @@ read_key_from_dashboard_db() {
 	fi
 
 	local table
-	table="$(sqlite3 "$db_path" "SELECT name FROM sqlite_master WHERE type='table' AND name='dashboard_deployment';" 2>/dev/null || true)"
+	table="$("$sqlite3_bin" "$db_path" "SELECT name FROM sqlite_master WHERE type='table' AND name='dashboard_deployment';" 2>/dev/null || true)"
 	if [[ -z "$table" ]]; then
 		return 1
 	fi
 
 	local value
-	value="$(sqlite3 "$db_path" "SELECT agent_key FROM dashboard_deployment WHERE id = 1;" 2>/dev/null || true)"
+	value="$("$sqlite3_bin" "$db_path" "SELECT agent_key FROM dashboard_deployment WHERE id = 1;" 2>/dev/null || true)"
 	value="${value//$'\r'/}"
 	value="${value//$'\n'/}"
 	if [[ -n "$value" ]]; then
@@ -97,7 +102,7 @@ write_snippet() {
 		controller_url="$(grep -E '^CONTROLLER_URL=' "$OUTPUT" 2>/dev/null | tail -1 | cut -d= -f2- || true)"
 		api_port="$(grep -E '^API_PORT=' "$OUTPUT" 2>/dev/null | tail -1 | cut -d= -f2- || echo "3100")"
 		db_path="$(grep -E '^DB_PATH=' "$OUTPUT" 2>/dev/null | tail -1 | cut -d= -f2- || echo "/var/lib/trinityproxy/trinityproxy.db")"
-		[[ -n "$api_key" ]] || api_key="$(openssl rand -hex 32)"
+		[[ -n "$api_key" ]] || api_key="$(production_random_hex)"
 		[[ -n "$controller_url" ]] || controller_url="http://127.0.0.1:${api_port}"
 		cat >"$OUTPUT" <<EOF
 TRINITY_API_KEY=${api_key}

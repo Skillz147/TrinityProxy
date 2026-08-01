@@ -3,6 +3,7 @@
 # Install TrinityProxy Controller as a systemd service (requires root).
 # Runtime runs as dedicated user "trinityproxy"; this script is one-time sudo setup.
 
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
 set -e
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -27,7 +28,9 @@ if [ ! -f "cmd/api/enhanced_main.go" ]; then
 fi
 
 create_controller_user() {
-	if id "$CONTROLLER_USER" &>/dev/null; then
+	local id_bin
+	id_bin="$(production_resolve_cmd id)" || exit 1
+	if "$id_bin" "$CONTROLLER_USER" &>/dev/null; then
 		echo "[*] System user $CONTROLLER_USER already exists"
 	fi
 	production_ensure_trinityproxy_user
@@ -35,7 +38,7 @@ create_controller_user() {
 
 setup_state_dir() {
     echo "[*] Preparing controller state directory: $STATE_DIR"
-    install -d -o "$CONTROLLER_USER" -g "$CONTROLLER_GROUP" -m 750 "$STATE_DIR"
+    production_install -d -o "$CONTROLLER_USER" -g "$CONTROLLER_GROUP" -m 750 "$STATE_DIR"
 }
 
 setup_project_permissions() {
@@ -75,17 +78,17 @@ chmod 644 /etc/systemd/system/trinityproxy-controller.service
 # Reload systemd and enable the service
 echo "[*] Enabling TrinityProxy Controller service..."
 if [[ -f .env.controller ]] && [[ ! -f /etc/trinityproxy/controller.env ]]; then
-	install -d -m 750 /etc/trinityproxy
+	production_install -d -m 750 /etc/trinityproxy
 	grep -E '^export TRINITY_' .env.controller | sed 's/^export //' > /etc/trinityproxy/controller.env
 	chmod 640 /etc/trinityproxy/controller.env
 	echo "[+] Wrote /etc/trinityproxy/controller.env from .env.controller"
 elif [[ -f /etc/trinityproxy/controller.env ]]; then
 	echo "[*] Using existing /etc/trinityproxy/controller.env"
 fi
-systemctl daemon-reload
-systemctl enable trinityproxy-controller
+production_systemctl daemon-reload
+production_systemctl enable trinityproxy-controller
 if [[ "${SKIP_START:-}" != "1" ]]; then
-	systemctl start trinityproxy-controller
+	production_systemctl start trinityproxy-controller
 else
 	echo "[*] Skipping service start (SKIP_START=1)"
 fi

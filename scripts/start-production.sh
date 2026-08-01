@@ -8,6 +8,8 @@
 
 set -euo pipefail
 
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
@@ -36,11 +38,17 @@ if [[ $EUID -ne 0 ]]; then
 	fi
 fi
 
+production_preserve_path() {
+	echo "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
+}
+
 run_as_root() {
+	local preserved_path
+	preserved_path="$(production_preserve_path)"
 	if [[ $EUID -eq 0 ]]; then
-		"$@"
+		env PATH="$preserved_path" "$@"
 	else
-		$SUDO "$@"
+		$SUDO env PATH="$preserved_path" "$@"
 	fi
 }
 
@@ -100,6 +108,14 @@ ensure_system_deps_debian() {
 	else
 		echo "[+] gcc present"
 	fi
+	if ! command -v install >/dev/null 2>&1 || ! command -v id >/dev/null 2>&1 || ! command -v chown >/dev/null 2>&1; then
+		apt_queue_pkg install coreutils
+		apt_queue_pkg id coreutils
+		apt_queue_pkg chown coreutils
+	fi
+	if ! command -v systemctl >/dev/null 2>&1; then
+		APT_INSTALL_QUEUE+=("systemd")
+	fi
 	if production_have_user_mgmt; then
 		echo "[+] adduser/useradd present"
 	else
@@ -116,7 +132,7 @@ ensure_system_deps_debian() {
 	apt_flush_install_queue
 
 	local cmd
-	for cmd in curl wget git make sqlite3 openssl gcc; do
+	for cmd in curl wget git make sqlite3 openssl gcc install id chown systemctl; do
 		if ! command -v "$cmd" >/dev/null 2>&1; then
 			echo "[-] Required command missing after install: $cmd"
 			exit 1
@@ -185,6 +201,9 @@ ensure_system_deps() {
 	ensure_command wget wget
 	ensure_command sqlite3 sqlite3 sqlite
 	ensure_command openssl openssl
+	ensure_command install coreutils
+	ensure_command id coreutils
+	ensure_command chown coreutils
 	if production_have_user_mgmt; then
 		echo "[+] adduser/useradd present"
 	else
@@ -208,7 +227,7 @@ ensure_system_deps() {
 
 ensure_go() {
 	echo "[2/10] Checking Go..."
-	export PATH="/usr/local/go/bin:$PATH"
+	export PATH="/usr/local/go/bin:$(production_preserve_path)"
 	if command -v go >/dev/null 2>&1; then
 		echo "[+] Go: $(go version)"
 		return 0
@@ -216,7 +235,7 @@ ensure_go() {
 	echo "[*] Go not found — running setup.sh (controller-only, no Dante)..."
 	chmod +x scripts/setup.sh
 	run_as_root env TRINITY_SKIP_DANTE=1 bash scripts/setup.sh
-	export PATH="/usr/local/go/bin:$PATH"
+	export PATH="/usr/local/go/bin:$(production_preserve_path)"
 	if ! command -v go >/dev/null 2>&1; then
 		echo "[-] Go installation failed"
 		exit 1
@@ -226,7 +245,7 @@ ensure_go() {
 
 build_all() {
 	echo "[4/10] Building binaries + dashboard UI..."
-	export PATH="/usr/local/go/bin:$PATH"
+	export PATH="/usr/local/go/bin:$(production_preserve_path)"
 	chmod +x scripts/build-dashboard-ui.sh
 	make build
 }
@@ -269,17 +288,16 @@ run_as_root bash -c "
 	cd '$ROOT'
 	# shellcheck source=scripts/lib/production-common.sh
 	source '$ROOT/scripts/lib/production-common.sh'
-	export PATH='/usr/local/go/bin:\$PATH'
 	production_init_dashboard_admin
 	production_sync_agent_key_to_controller_env
-	systemctl daemon-reload
-	systemctl enable trinityproxy-controller trinityproxy-dashboard
-	systemctl restart trinityproxy-controller
-	systemctl restart trinityproxy-dashboard
+	production_systemctl daemon-reload
+	production_systemctl enable trinityproxy-controller trinityproxy-dashboard
+	production_systemctl restart trinityproxy-controller
+	production_systemctl restart trinityproxy-dashboard
 	sleep 2
-	if ! systemctl is-active trinityproxy-controller >/dev/null 2>&1 || ! systemctl is-active trinityproxy-dashboard >/dev/null 2>&1; then
+	if ! production_systemctl is-active trinityproxy-controller >/dev/null 2>&1 || ! production_systemctl is-active trinityproxy-dashboard >/dev/null 2>&1; then
 		echo '[!] One or more services failed to start:'
-		systemctl status trinityproxy-controller trinityproxy-dashboard --no-pager || true
+		production_systemctl status trinityproxy-controller trinityproxy-dashboard --no-pager || true
 		exit 1
 	fi
 	production_print_summary

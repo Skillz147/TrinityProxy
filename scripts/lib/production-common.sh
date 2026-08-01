@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Shared helpers for TrinityProxy production bootstrap (sourced, not executed).
 
-# sudo/systemd subshells often omit /usr/sbin from PATH; user tools live there.
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
 
 TRINITY_DIR="${TRINITY_DIR:-/etc/trinityproxy}"
@@ -12,6 +11,41 @@ API_PORT="${API_PORT:-3100}"
 DB_PATH="${DB_PATH:-$STATE_DIR/trinityproxy.db}"
 DASHBOARD_PORT="${DASHBOARD_PORT:-8081}"
 
+production_resolve_cmd() {
+	local name="$1"
+	local dir p
+	for dir in /usr/local/sbin /usr/local/bin /usr/sbin /usr/bin /sbin /bin; do
+		p="$dir/$name"
+		if [[ -x "$p" ]]; then
+			echo "$p"
+			return 0
+		fi
+	done
+	if command -v "$name" >/dev/null 2>&1; then
+		command -v "$name"
+		return 0
+	fi
+	return 1
+}
+
+production_install() {
+	local bin
+	bin="$(production_resolve_cmd install)" || {
+		echo "[-] Error: install not found" >&2
+		return 1
+	}
+	"$bin" "$@"
+}
+
+production_systemctl() {
+	local bin
+	bin="$(production_resolve_cmd systemctl)" || {
+		echo "[-] Error: systemctl not found" >&2
+		return 1
+	}
+	"$bin" "$@"
+}
+
 production_find_adduser() {
 	local p
 	for p in /usr/sbin/adduser /sbin/adduser; do
@@ -20,11 +54,7 @@ production_find_adduser() {
 			return 0
 		fi
 	done
-	if command -v adduser >/dev/null 2>&1; then
-		command -v adduser
-		return 0
-	fi
-	return 1
+	production_resolve_cmd adduser
 }
 
 production_find_useradd() {
@@ -35,11 +65,7 @@ production_find_useradd() {
 			return 0
 		fi
 	done
-	if command -v useradd >/dev/null 2>&1; then
-		command -v useradd
-		return 0
-	fi
-	return 1
+	production_resolve_cmd useradd
 }
 
 production_have_user_mgmt() {
@@ -47,27 +73,39 @@ production_have_user_mgmt() {
 }
 
 production_random_hex() {
-	openssl rand -hex 32
+	local openssl_bin
+	openssl_bin="$(production_resolve_cmd openssl)" || {
+		echo "[-] Error: openssl not found" >&2
+		return 1
+	}
+	"$openssl_bin" rand -hex 32
 }
 
 production_detect_primary_ip() {
-	local ip=""
-	if command -v hostname >/dev/null 2>&1; then
-		ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+	local ip="" hostname_bin awk_bin ip_bin
+	hostname_bin="$(production_resolve_cmd hostname 2>/dev/null || true)"
+	awk_bin="$(production_resolve_cmd awk 2>/dev/null || true)"
+	ip_bin="$(production_resolve_cmd ip 2>/dev/null || true)"
+
+	if [[ -n "$hostname_bin" && -n "$awk_bin" ]]; then
+		ip="$("$hostname_bin" -I 2>/dev/null | "$awk_bin" '{print $1}')"
 	fi
-	if [[ -z "$ip" ]] && command -v ip >/dev/null 2>&1; then
-		ip="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}')"
+	if [[ -z "$ip" && -n "$ip_bin" && -n "$awk_bin" ]]; then
+		ip="$("$ip_bin" -4 route get 1.1.1.1 2>/dev/null | "$awk_bin" '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}')"
 	fi
 	echo "$ip"
 }
 
 production_read_env_value() {
 	local file="$1" key="$2"
+	local grep_bin tail_bin
 	if [[ ! -f "$file" ]]; then
 		return 1
 	fi
+	grep_bin="$(production_resolve_cmd grep)" || return 1
+	tail_bin="$(production_resolve_cmd tail)" || return 1
 	local line
-	line="$(grep -E "^${key}=" "$file" | tail -1 || true)"
+	line="$("$grep_bin" -E "^${key}=" "$file" | "$tail_bin" -1 || true)"
 	[[ -n "$line" ]] || return 1
 	echo "${line#*=}"
 }
@@ -76,9 +114,13 @@ production_read_env_value() {
 production_create_system_user() {
 	local user="${1:-$DASHBOARD_USER}"
 	local home="${2:-$STATE_DIR}"
-	local adduser_bin useradd_bin
+	local adduser_bin useradd_bin id_bin
 
-	if id "$user" &>/dev/null; then
+	id_bin="$(production_resolve_cmd id)" || {
+		echo "[-] Error: id not found" >&2
+		return 1
+	}
+	if "$id_bin" "$user" &>/dev/null; then
 		return 0
 	fi
 
@@ -102,12 +144,28 @@ production_ensure_trinityproxy_user() {
 }
 
 production_ensure_state_dir() {
-	install -d -o "$DASHBOARD_USER" -g "$DASHBOARD_USER" -m 750 "$STATE_DIR"
+	local install_bin
+	install_bin="$(production_resolve_cmd install)" || {
+		echo "[-] Error: install not found" >&2
+		return 1
+	}
+	"$install_bin" -d -o "$DASHBOARD_USER" -g "$DASHBOARD_USER" -m 750 "$STATE_DIR"
 }
 
 production_ensure_controller_env() {
 	echo "[*] Preparing controller secrets..."
-	install -d -m 750 "$TRINITY_DIR"
+	local install_bin chmod_bin chown_bin
+	install_bin="$(production_resolve_cmd install)" || {
+		echo "[-] Error: install not found" >&2
+		return 1
+	}
+	chmod_bin="$(production_resolve_cmd chmod)" || {
+		echo "[-] Error: chmod not found" >&2
+		return 1
+	}
+	chown_bin="$(production_resolve_cmd chown 2>/dev/null || true)"
+
+	"$install_bin" -d -m 750 "$TRINITY_DIR"
 
 	local api_key agent_key controller_url
 	api_key="$(production_read_env_value "$CONTROLLER_ENV" TRINITY_API_KEY || true)"
@@ -134,18 +192,24 @@ API_PORT=${API_PORT}
 DB_PATH=${DB_PATH}
 CONTROLLER_URL=${controller_url}
 EOF
-	chmod 640 "$CONTROLLER_ENV"
-	chown root:"$DASHBOARD_USER" "$CONTROLLER_ENV" 2>/dev/null || chmod 640 "$CONTROLLER_ENV"
+	"$chmod_bin" 640 "$CONTROLLER_ENV"
+	if [[ -n "$chown_bin" ]]; then
+		"$chown_bin" root:"$DASHBOARD_USER" "$CONTROLLER_ENV" 2>/dev/null || "$chmod_bin" 640 "$CONTROLLER_ENV"
+	else
+		"$chmod_bin" 640 "$CONTROLLER_ENV"
+	fi
 	echo "[+] Wrote $CONTROLLER_ENV"
 }
 
 production_sync_agent_key_to_controller_env() {
 	local db="$STATE_DIR/dashboard.db"
-	if [[ ! -f "$db" ]] || ! command -v sqlite3 >/dev/null 2>&1; then
+	local sqlite3_bin
+	sqlite3_bin="$(production_resolve_cmd sqlite3 2>/dev/null || true)"
+	if [[ ! -f "$db" ]] || [[ -z "$sqlite3_bin" ]]; then
 		return 0
 	fi
 	local key
-	key="$(sqlite3 "$db" "SELECT agent_key FROM dashboard_deployment WHERE id = 1;" 2>/dev/null || true)"
+	key="$("$sqlite3_bin" "$db" "SELECT agent_key FROM dashboard_deployment WHERE id = 1;" 2>/dev/null || true)"
 	key="${key//$'\r'/}"
 	key="${key//$'\n'/}"
 	if [[ -z "$key" ]]; then
@@ -156,7 +220,9 @@ production_sync_agent_key_to_controller_env() {
 	if [[ "$current" == "$key" ]]; then
 		return 0
 	fi
-	local api_key controller_url api_port db_path
+	local api_key controller_url api_port db_path chmod_bin chown_bin
+	chmod_bin="$(production_resolve_cmd chmod)" || return 1
+	chown_bin="$(production_resolve_cmd chown 2>/dev/null || true)"
 	api_key="$(production_read_env_value "$CONTROLLER_ENV" TRINITY_API_KEY)"
 	controller_url="$(production_read_env_value "$CONTROLLER_ENV" CONTROLLER_URL)"
 	api_port="$(production_read_env_value "$CONTROLLER_ENV" API_PORT || echo "$API_PORT")"
@@ -168,8 +234,10 @@ API_PORT=${api_port}
 DB_PATH=${db_path}
 CONTROLLER_URL=${controller_url}
 EOF
-	chmod 640 "$CONTROLLER_ENV"
-	chown root:"$DASHBOARD_USER" "$CONTROLLER_ENV" 2>/dev/null || true
+	"$chmod_bin" 640 "$CONTROLLER_ENV"
+	if [[ -n "$chown_bin" ]]; then
+		"$chown_bin" root:"$DASHBOARD_USER" "$CONTROLLER_ENV" 2>/dev/null || true
+	fi
 	echo "[+] Synced TRINITY_AGENT_KEY from dashboard DB to $CONTROLLER_ENV"
 }
 
@@ -211,13 +279,22 @@ production_init_dashboard_admin() {
 	done < <(./build/trinityproxy-dashboard --init-only)
 
 	if [[ -f "$STATE_DIR/dashboard.db" ]]; then
-		chown "$DASHBOARD_USER:$DASHBOARD_USER" "$STATE_DIR/dashboard.db"
-		chmod 640 "$STATE_DIR/dashboard.db"
+		local chown_bin chmod_bin
+		chown_bin="$(production_resolve_cmd chown 2>/dev/null || true)"
+		chmod_bin="$(production_resolve_cmd chmod 2>/dev/null || true)"
+		if [[ -n "$chown_bin" ]]; then
+			"$chown_bin" "$DASHBOARD_USER:$DASHBOARD_USER" "$STATE_DIR/dashboard.db"
+		fi
+		if [[ -n "$chmod_bin" ]]; then
+			"$chmod_bin" 640 "$STATE_DIR/dashboard.db"
+		fi
 	fi
 }
 
 production_caddy_active() {
-	[[ -f /etc/caddy/trinityproxy.caddy ]] && command -v caddy >/dev/null 2>&1
+	local caddy_bin
+	caddy_bin="$(production_resolve_cmd caddy 2>/dev/null || true)"
+	[[ -f /etc/caddy/trinityproxy.caddy ]] && [[ -n "$caddy_bin" ]]
 }
 
 production_print_dashboard_login_banner() {
