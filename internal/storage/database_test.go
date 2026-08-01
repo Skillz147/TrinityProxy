@@ -44,6 +44,19 @@ func setLastSeenMinutesAgo(t *testing.T, s *NodeStorage, nodeID string, minutes 
 	}
 }
 
+func setLastSeenSecondsAgo(t *testing.T, s *NodeStorage, nodeID string, seconds int) {
+	t.Helper()
+
+	_, err := s.db.Exec(
+		`UPDATE proxy_nodes SET last_seen = datetime('now', ?) WHERE id = ?`,
+		fmt.Sprintf("-%d seconds", seconds),
+		nodeID,
+	)
+	if err != nil {
+		t.Fatalf("setLastSeenSecondsAgo: %v", err)
+	}
+}
+
 func TestUpsertNodeCreatesAndUpdates(t *testing.T) {
 	s := newTestStorage(t)
 	node := testNode("203.0.113.10", 1080, "US")
@@ -120,6 +133,15 @@ func TestMarkOfflineNodesTimeout(t *testing.T) {
 	}
 	if staleOnline {
 		t.Fatal("expected stale node to be marked offline")
+	}
+
+	var staleHealthy bool
+	row = s.db.QueryRow(`SELECT is_healthy FROM proxy_nodes WHERE id = ?`, "203.0.113.21:1081")
+	if err := row.Scan(&staleHealthy); err != nil {
+		t.Fatalf("scan stale health: %v", err)
+	}
+	if staleHealthy {
+		t.Fatal("expected stale node to be marked unhealthy")
 	}
 
 	online, err := s.GetOnlineNodes()
@@ -363,5 +385,82 @@ func TestUpdateNodeHealth(t *testing.T) {
 	}
 	if !nodes[0].LastProbeAt.Equal(probedAt) {
 		t.Fatalf("last_probe_at = %v, want %v", nodes[0].LastProbeAt, probedAt)
+	}
+}
+
+func TestMarkOfflineNodesWithinStaleThreshold(t *testing.T) {
+	s := newTestStorage(t)
+
+	node := testNode("203.0.113.80", 1080, "US")
+	if err := s.UpsertNode(node); err != nil {
+		t.Fatalf("UpsertNode: %v", err)
+	}
+
+	setLastSeenSecondsAgo(t, s, "203.0.113.80:1080", 150)
+
+	if err := s.MarkOfflineNodes(); err != nil {
+		t.Fatalf("MarkOfflineNodes: %v", err)
+	}
+
+	got, err := s.GetNodeByID("203.0.113.80:1080")
+	if err != nil {
+		t.Fatalf("GetNodeByID: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected node to still exist")
+	}
+	if got.IsOnline {
+		t.Fatal("expected node past stale threshold to be offline")
+	}
+	if got.IsHealthy {
+		t.Fatal("expected stale node to be unhealthy")
+	}
+}
+
+func TestMarkOfflineNodesKeepsRecentHeartbeats(t *testing.T) {
+	s := newTestStorage(t)
+
+	node := testNode("203.0.113.81", 1080, "US")
+	if err := s.UpsertNode(node); err != nil {
+		t.Fatalf("UpsertNode: %v", err)
+	}
+
+	setLastSeenSecondsAgo(t, s, "203.0.113.81:1080", 30)
+
+	if err := s.MarkOfflineNodes(); err != nil {
+		t.Fatalf("MarkOfflineNodes: %v", err)
+	}
+
+	got, err := s.GetNodeByID("203.0.113.81:1080")
+	if err != nil {
+		t.Fatalf("GetNodeByID: %v", err)
+	}
+	if got == nil || !got.IsOnline {
+		t.Fatal("expected recent heartbeat to remain online")
+	}
+}
+
+func TestDeleteNode(t *testing.T) {
+	s := newTestStorage(t)
+
+	node := testNode("203.0.113.90", 1080, "US")
+	if err := s.UpsertNode(node); err != nil {
+		t.Fatalf("UpsertNode: %v", err)
+	}
+
+	if err := s.DeleteNode("203.0.113.90:1080"); err != nil {
+		t.Fatalf("DeleteNode: %v", err)
+	}
+
+	got, err := s.GetNodeByID("203.0.113.90:1080")
+	if err != nil {
+		t.Fatalf("GetNodeByID: %v", err)
+	}
+	if got != nil {
+		t.Fatal("expected node to be deleted")
+	}
+
+	if err := s.DeleteNode("missing:1080"); err == nil {
+		t.Fatal("expected error deleting missing node")
 	}
 }

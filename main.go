@@ -6,9 +6,11 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 
 	"github.com/Skillz147/TrinityProxy/internal/agent"
 	"github.com/Skillz147/TrinityProxy/internal/config"
@@ -161,9 +163,18 @@ func runInstaller(log *slog.Logger) {
 }
 
 func runHeartbeatAgent(log *slog.Logger) {
+	cfg := config.Load()
 	log.Info("starting heartbeat agent")
 	go agent.StartHeartbeatLoop()
-	select {} // block forever
+
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	<-sig
+
+	log.Info("shutdown signal received, deregistering agent")
+	if err := agent.SendDeregister(cfg); err != nil {
+		log.Warn("deregister failed", "err", err)
+	}
 }
 
 func startEmbeddedSOCKS(log *slog.Logger) {

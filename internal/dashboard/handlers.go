@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -46,6 +47,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/auth/change-password", s.middleware.RequireAuth(s.handleChangePassword))
 	mux.HandleFunc("GET /api/dashboard/stats", s.middleware.RequirePasswordChanged(s.handleStats))
 	mux.HandleFunc("GET /api/dashboard/nodes", s.middleware.RequirePasswordChanged(s.handleNodes))
+	mux.HandleFunc("DELETE /api/dashboard/nodes/{id}", s.middleware.RequirePasswordChanged(s.handleDeleteNode))
 	mux.HandleFunc("GET /api/dashboard/nodes/{id}/credentials", s.middleware.RequirePasswordChanged(s.handleNodeCredentials))
 	mux.HandleFunc("GET /api/dashboard/bootstrap-script", s.middleware.RequirePasswordChanged(s.handleBootstrapScript))
 	mux.HandleFunc("GET /api/dashboard/deploy-commands", s.middleware.RequirePasswordChanged(s.handleDeployCommands))
@@ -194,6 +196,29 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"nodes": api.ToPublicSlice(nodes),
 		"count": len(nodes),
+	})
+}
+
+func (s *Server) handleDeleteNode(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		writeJSONError(w, http.StatusBadRequest, "node id is required")
+		return
+	}
+
+	if err := s.nodes.DeleteNode(id); err != nil {
+		if err == sql.ErrNoRows {
+			writeJSONError(w, http.StatusNotFound, "node not found")
+			return
+		}
+		s.log.Error("failed to delete node", "id", id, "err", err)
+		writeJSONError(w, http.StatusInternalServerError, "failed to remove agent")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status":  "removed",
+		"node_id": id,
 	})
 }
 

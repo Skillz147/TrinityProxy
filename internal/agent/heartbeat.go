@@ -44,20 +44,32 @@ func sendHeartbeat(cfg config.Config) error {
 	if err != nil {
 		return fmt.Errorf("metadata error: %w", err)
 	}
+	return postNodePayload(cfg.HeartbeatURL(), cfg.AgentKey, *meta)
+}
 
+// SendDeregister notifies the controller that this agent is shutting down.
+func SendDeregister(cfg config.Config) error {
+	meta, err := GatherMetadata()
+	if err != nil {
+		return fmt.Errorf("metadata error: %w", err)
+	}
+	return postNodePayload(cfg.DeregisterURL(), cfg.AgentKey, *meta)
+}
+
+func postNodePayload(url, agentKey string, meta NodeMetadata) error {
 	data, err := json.Marshal(meta)
 	if err != nil {
 		return fmt.Errorf("marshal error: %w", err)
 	}
 
-	req, err := http.NewRequest("POST", cfg.HeartbeatURL(), bytes.NewBuffer(data))
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(data))
 	if err != nil {
 		return fmt.Errorf("request error: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if cfg.AgentKey != "" {
-		req.Header.Set("X-API-Key", cfg.AgentKey)
-		req.Header.Set("Authorization", "Bearer "+cfg.AgentKey)
+	if agentKey != "" {
+		req.Header.Set("X-API-Key", agentKey)
+		req.Header.Set("Authorization", "Bearer "+agentKey)
 	}
 
 	client := &http.Client{Timeout: 10 * time.Second}

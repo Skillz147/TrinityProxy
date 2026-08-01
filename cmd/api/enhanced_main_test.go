@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -72,6 +74,16 @@ func (m *mockNodeStore) GetNodesByCountry(country string) ([]storage.ProxyNode, 
 
 func (m *mockNodeStore) MarkOfflineNodes() error {
 	return m.markOfflineErr
+}
+
+func (m *mockNodeStore) DeleteNode(id string) error {
+	for i := range m.nodes {
+		if m.nodes[i].ID == id {
+			m.nodes = append(m.nodes[:i], m.nodes[i+1:]...)
+			return nil
+		}
+	}
+	return sql.ErrNoRows
 }
 
 func (m *mockNodeStore) UpdateNodeHealth(id string, healthy bool, probedAt time.Time) error {
@@ -221,6 +233,42 @@ func TestHandleHeartbeatMethodNotAllowed(t *testing.T) {
 
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
+	}
+}
+
+func TestHandleDeregisterDeletesNode(t *testing.T) {
+	dir := t.TempDir()
+	store, err := storage.NewNodeStorage(filepath.Join(dir, "nodes.db"))
+	if err != nil {
+		t.Fatalf("NewNodeStorage: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	node := &storage.ProxyNode{
+		IP: "203.0.113.99", Port: 1080,
+		Username: "u", Password: "p", Country: "US",
+	}
+	if err := store.UpsertNode(node); err != nil {
+		t.Fatalf("UpsertNode: %v", err)
+	}
+
+	server := newTestServer(store)
+	body := `{"ip":"203.0.113.99","port":1080,"username":"u","password":"p","country":"US"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/deregister", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	server.handleDeregister(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	got, err := store.GetNodeByID("203.0.113.99:1080")
+	if err != nil {
+		t.Fatalf("GetNodeByID: %v", err)
+	}
+	if got != nil {
+		t.Fatal("expected node to be removed on deregister")
 	}
 }
 

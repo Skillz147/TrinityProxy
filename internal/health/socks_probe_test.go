@@ -193,6 +193,50 @@ func TestLocalFallbackDisabledSkipsLoopback(t *testing.T) {
 	}
 }
 
+func TestSameHostFallbackProbesLoopback(t *testing.T) {
+	addr, cleanup := startMockSOCKS5Server(t, "host", "secret")
+	defer cleanup()
+
+	var dialed []string
+	prober := NewProber(
+		WithTimeout(time.Second),
+		WithLocalFallback(false),
+		WithSameHostIP("203.0.113.55"),
+		WithDialFunc(func(network, address string) (net.Conn, error) {
+			dialed = append(dialed, address)
+			if strings.HasPrefix(address, "203.0.113.55:") {
+				return nil, io.EOF
+			}
+			return net.Dial(network, address)
+		}),
+	)
+
+	if !prober.ProbeFresh("203.0.113.55", addr.Port, "host", "secret") {
+		t.Fatal("expected same-host loopback fallback probe to succeed")
+	}
+	if len(dialed) != 2 {
+		t.Fatalf("expected 2 dial attempts (WAN then loopback), got %d: %v", len(dialed), dialed)
+	}
+}
+
+func TestProbeCacheKeyIncludesCredentials(t *testing.T) {
+	var dialCount int32
+	prober := NewProber(
+		WithTimeout(100*time.Millisecond),
+		WithCacheTTL(time.Minute),
+		WithDialFunc(func(network, address string) (net.Conn, error) {
+			atomic.AddInt32(&dialCount, 1)
+			return nil, io.EOF
+		}),
+	)
+
+	prober.ProbeFresh("127.0.0.1", 1080, "alice", "one")
+	prober.ProbeFresh("127.0.0.1", 1080, "alice", "two")
+	if atomic.LoadInt32(&dialCount) != 2 {
+		t.Fatalf("expected credential-specific cache keys to miss, got %d dials", dialCount)
+	}
+}
+
 type mockAddr struct {
 	Port int
 }

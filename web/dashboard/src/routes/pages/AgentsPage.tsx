@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type MouseEvent } from "react";
-import { Eye, Link2, Server } from "lucide-react";
+import { Eye, Link2, Server, Trash2 } from "lucide-react";
 import { EmptyState } from "@/components/EmptyState";
 import { ErrorState } from "@/components/ErrorState";
 import { SocksCredentialsDialog } from "@/components/SocksCredentialsDialog";
@@ -17,6 +17,7 @@ import {
   ApiError,
   fetchDashboardNodes,
   fetchNodeCredentials,
+  deleteDashboardNode,
   type ProxyNode,
 } from "@/lib/api";
 import { toast } from "@/lib/toast";
@@ -95,11 +96,13 @@ function AgentContextMenu({
   token,
   onClose,
   onViewCredentials,
+  onRemove,
 }: {
   menu: ContextMenuState;
   token: string | null;
   onClose: () => void;
   onViewCredentials: (node: ProxyNode) => void;
+  onRemove: (node: ProxyNode) => void;
 }) {
   const [isLoading, setIsLoading] = useState(false);
 
@@ -148,6 +151,18 @@ function AgentContextMenu({
       >
         <Link2 className="h-4 w-4 shrink-0" />
         Copy connection string
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-destructive hover:bg-destructive/10"
+        onClick={() => {
+          onRemove(menu.node);
+          onClose();
+        }}
+      >
+        <Trash2 className="h-4 w-4 shrink-0" />
+        Remove agent
       </button>
     </div>
   );
@@ -375,6 +390,23 @@ export function AgentsPage() {
     setContextMenu({ node, x: event.clientX, y: event.clientY });
   };
 
+  const handleRemoveAgent = async (node: ProxyNode) => {
+    const label = `${node.ip}:${node.port}`;
+    if (!window.confirm(`Remove agent ${label} from the dashboard?`)) {
+      return;
+    }
+
+    try {
+      await deleteDashboardNode(token, node.id);
+      setNodes((current) => current.filter((item) => item.id !== node.id));
+      toast.success(`Removed agent ${label}`);
+    } catch (err) {
+      const message =
+        err instanceof ApiError ? err.message : "Unable to remove agent.";
+      toast.error(message);
+    }
+  };
+
   return (
     <div className="space-y-6">
         {isLoading && <TableSkeleton rows={6} columns={7} />}
@@ -458,6 +490,7 @@ export function AgentsPage() {
           token={token}
           onClose={() => setContextMenu(null)}
           onViewCredentials={setCredentialsNode}
+          onRemove={(node) => void handleRemoveAgent(node)}
         />
       )}
 

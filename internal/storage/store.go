@@ -11,6 +11,7 @@ type NodeStore interface {
 	GetNodesByCountry(country string) ([]ProxyNode, error)
 	UpdateNodeHealth(id string, healthy bool, probedAt time.Time) error
 	MarkOfflineNodes() error
+	DeleteNode(id string) error
 }
 
 var _ NodeStore = (*NodeStorage)(nil)

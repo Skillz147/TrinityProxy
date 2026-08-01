@@ -65,6 +65,12 @@ func (c Config) HeartbeatURL() string {
 	return base + "/api/heartbeat"
 }
 
+// DeregisterURL returns the agent deregister endpoint derived from ControllerURL.
+func (c Config) DeregisterURL() string {
+	base := strings.TrimRight(c.ControllerURL, "/")
+	return base + "/api/deregister"
+}
+
 // ListenAddr returns the API server bind host:port (default 0.0.0.0:3100).
 func (c Config) ListenAddr() string {
 	host := strings.TrimSpace(c.APIBindAddr)
@@ -83,6 +89,24 @@ func (c Config) IsProduction() bool {
 		return true
 	}
 	return os.Getenv("TRINITY_NONINTERACTIVE") == "1"
+}
+
+// ProbeLocalFallback reports whether SOCKS probes may retry via 127.0.0.1 when the
+// agent's reported WAN IP is unreachable (NAT hairpin, same-host dev agents).
+// Controlled by TRINITY_PROBE_LOCAL_FALLBACK; defaults to enabled unless
+// TRINITY_ENV is production/prod. TRINITY_NONINTERACTIVE does not affect this.
+func (c Config) ProbeLocalFallback() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("TRINITY_PROBE_LOCAL_FALLBACK"))) {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("TRINITY_ENV"))) {
+	case "production", "prod":
+		return false
+	}
+	return true
 }
 
 // LogSecurityWarnings emits startup warnings when auth keys are unset.

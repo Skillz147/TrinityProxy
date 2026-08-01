@@ -2,6 +2,7 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -51,8 +52,7 @@ func NewAPIServer(dbPath string, log *slog.Logger) (*APIServer, error) {
 }
 
 func newProber(cfg config.Config) *health.Prober {
-	opts := []health.ProberOption{health.WithLocalFallback(!cfg.IsProduction())}
-	return health.NewProber(opts...)
+	return health.NewProberFromConfig(cfg)
 }
 
 func NewAPIServerWithStore(store storage.NodeStore, log *slog.Logger, prober *health.Prober) *APIServer {
@@ -133,6 +133,39 @@ func (s *APIServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		"device_class", meta.DeviceClass,
 		"network_type", meta.NetworkType,
 	)
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprint(w, "ok")
+}
+
+func (s *APIServer) handleDeregister(w http.ResponseWriter, r *http.Request) {
+	log := s.log.With("component", "deregister")
+	if r.Method != "POST" {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var meta NodeMetadata
+	if err := json.NewDecoder(r.Body).Decode(&meta); err != nil {
+		log.Warn("invalid deregister payload", "err", err)
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	nodeID := fmt.Sprintf("%s:%d", meta.IP, meta.Port)
+	if err := s.storage.DeleteNode(nodeID); err != nil {
+		if err == sql.ErrNoRows {
+			log.Info("deregister for unknown node (already removed)", "node_id", nodeID)
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, "ok")
+			return
+		}
+		log.Error("failed to delete node on deregister", "err", err, "node_id", nodeID)
+		http.Error(w, "storage error", http.StatusInternalServerError)
+		return
+	}
+
+	s.refreshNodesOnlineMetric()
+	log.Info("agent deregistered", "node_id", nodeID, "ip", meta.IP, "port", meta.Port)
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprint(w, "ok")
 }
@@ -273,7 +306,7 @@ func (s *APIServer) handleMetrics(w http.ResponseWriter, r *http.Request) {
 
 func (s *APIServer) startCleanupRoutine() {
 	log := s.log.With("component", "cleanup")
-	ticker := time.NewTicker(1 * time.Minute)
+	ticker := time.NewTicker(30 * time.Second)
 	go func() {
 		for range ticker.C {
 			if err := s.storage.MarkOfflineNodes(); err != nil {
@@ -312,6 +345,7 @@ func main() {
 	server.refreshNodesOnlineMetric()
 
 	http.HandleFunc("/api/heartbeat", api.WithAPIKey(cfg.AgentKey, "trinity-agent", server.handleHeartbeat))
+	http.HandleFunc("/api/deregister", api.WithAPIKey(cfg.AgentKey, "trinity-agent", server.handleDeregister))
 	http.HandleFunc("/api/nodes", api.WithAPIKey(cfg.APIKey, "trinity-api", server.handleGetNodes))
 	http.HandleFunc("/api/nodes/admin", api.WithAPIKey(adminKey(cfg), "trinity-admin", server.handleGetNodesAdmin))
 	http.HandleFunc("/api/nodes/country", api.WithAPIKey(cfg.APIKey, "trinity-api", server.handleGetNodesByCountry))
@@ -326,6 +360,7 @@ func main() {
 	log.Info("API server listening", "addr", cfg.ListenAddr(), "db", cfg.DBPath)
 	log.Info("endpoints registered",
 		"heartbeat", "POST /api/heartbeat",
+		"deregister", "POST /api/deregister",
 		"nodes", "GET /api/nodes",
 		"nodes_admin", "GET /api/nodes/admin",
 		"nodes_country", "GET /api/nodes/country?country=US",

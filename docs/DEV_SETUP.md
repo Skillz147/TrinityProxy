@@ -220,7 +220,7 @@ See **[docs/WINDOWS_AGENT.md](WINDOWS_AGENT.md)** for the 3-step install (build 
 
 ### Health probes (local dev)
 
-Agents on the same machine as the controller may report a **public WAN IP** that is not reachable locally. In dev mode (no `TRINITY_NONINTERACTIVE=1`), the controller retries SOCKS probes via `127.0.0.1` so `make run-agent-dev` nodes show **Healthy** without NAT hairpin. In production (`TRINITY_NONINTERACTIVE=1` or `TRINITY_ENV=production`), probes use the public IP only.
+Agents on the same machine as the controller may report a **public WAN IP** that is not reachable locally. The controller retries SOCKS probes via `127.0.0.1` when the WAN dial fails (enabled by default; disable with `TRINITY_ENV=production` or `TRINITY_PROBE_LOCAL_FALLBACK=0`). Set `SERVER_PUBLIC_IP` on the controller when agents share its public IP in production. Remote VPS agents are probed on their public IP first — loopback is only used after that dial fails.
 
 ### Docker — Linux agent on Mac (recommended)
 

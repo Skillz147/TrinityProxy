@@ -26,8 +26,9 @@ State databases: `/var/lib/trinityproxy/trinityproxy.db` (nodes), `/var/lib/trin
 | `TRINITY_ADMIN_KEY` | falls back to `TRINITY_API_KEY` | `GET /api/nodes/admin` |
 | `PROBE_INTERVAL` | `60s` | Background SOCKS probe interval |
 | `HEARTBEAT_INTERVAL` | `60s` | Documented for agents |
-| `TRINITY_ENV` | — | `production` disables dev probe fallback |
-| `TRINITY_NONINTERACTIVE` | — | `1` = production probe mode |
+| `TRINITY_ENV` | — | `production` disables loopback probe fallback |
+| `TRINITY_PROBE_LOCAL_FALLBACK` | enabled unless `TRINITY_ENV=production` | Retry SOCKS probes via `127.0.0.1` when WAN IP fails |
+| `SERVER_PUBLIC_IP` | auto | Enables same-host loopback fallback when node IP matches |
 | `LOG_FORMAT` | `json` | Set `text` for readable logs |
 
 Manual key generation: `openssl rand -hex 32`

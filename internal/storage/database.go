@@ -4,12 +4,34 @@ package storage
 import (
 	"database/sql"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/Skillz147/TrinityProxy/internal/geo"
 	_ "github.com/mattn/go-sqlite3"
 )
+
+// DefaultNodeStaleAfter is how long without a heartbeat before a node is marked offline.
+// Matches 2× the default 60s HEARTBEAT_INTERVAL.
+const DefaultNodeStaleAfter = 120 * time.Second
+
+func nodeStaleAfter() time.Duration {
+	if v := strings.TrimSpace(os.Getenv("NODE_STALE_AFTER")); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return DefaultNodeStaleAfter
+}
+
+func staleCutoffSQL() string {
+	secs := int(nodeStaleAfter().Seconds())
+	if secs < 1 {
+		secs = 1
+	}
+	return fmt.Sprintf("datetime('now', '-%d seconds')", secs)
+}
 
 const nodeSelectColumns = `id, ip, port, username, password, country, region, city, zip,
 	       platform, device_class, network_type,
@@ -221,9 +243,9 @@ func (s *NodeStorage) GetOnlineNodes() ([]ProxyNode, error) {
 	query := fmt.Sprintf(`
 	SELECT %s
 	FROM proxy_nodes 
-	WHERE is_online = true AND last_seen > datetime('now', '-5 minutes')
+	WHERE is_online = true AND last_seen > %s
 	ORDER BY last_seen DESC
-	`, nodeSelectColumns)
+	`, nodeSelectColumns, staleCutoffSQL())
 
 	rows, err := s.db.Query(query)
 	if err != nil {
@@ -255,9 +277,9 @@ func (s *NodeStorage) GetNodesByCountry(country string) ([]ProxyNode, error) {
 	query := fmt.Sprintf(`
 	SELECT %s
 	FROM proxy_nodes 
-	WHERE country IN (%s) AND is_online = true AND last_seen > datetime('now', '-5 minutes')
+	WHERE country IN (%s) AND is_online = true AND last_seen > %s
 	ORDER BY last_seen DESC
-	`, nodeSelectColumns, strings.Join(placeholders, ", "))
+	`, nodeSelectColumns, strings.Join(placeholders, ", "), staleCutoffSQL())
 
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
@@ -287,13 +309,28 @@ func (s *NodeStorage) UpdateNodeHealth(id string, healthy bool, probedAt time.Ti
 }
 
 func (s *NodeStorage) MarkOfflineNodes() error {
-	query := `
+	query := fmt.Sprintf(`
 	UPDATE proxy_nodes 
-	SET is_online = false, updated_at = CURRENT_TIMESTAMP
-	WHERE last_seen < datetime('now', '-5 minutes')
-	`
+	SET is_online = false, is_healthy = false, updated_at = CURRENT_TIMESTAMP
+	WHERE is_online = true AND last_seen < %s
+	`, staleCutoffSQL())
 	_, err := s.db.Exec(query)
 	return err
+}
+
+func (s *NodeStorage) DeleteNode(id string) error {
+	result, err := s.db.Exec(`DELETE FROM proxy_nodes WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 func (s *NodeStorage) Close() error {

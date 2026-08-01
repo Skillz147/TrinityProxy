@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -63,6 +64,7 @@ type Prober struct {
 	cache         *probeCache
 	timeout       time.Duration
 	localFallback bool
+	sameHostIPs   map[string]struct{}
 }
 
 // ProberOption configures a Prober.
@@ -104,6 +106,21 @@ func WithLocalFallback(enabled bool) ProberOption {
 	}
 }
 
+// WithSameHostIP allows loopback fallback when the node IP matches a known
+// controller public address (SERVER_PUBLIC_IP), even in strict production mode.
+func WithSameHostIP(ip string) ProberOption {
+	return func(p *Prober) {
+		ip = strings.TrimSpace(ip)
+		if ip == "" || isLoopbackHost(ip) {
+			return
+		}
+		if p.sameHostIPs == nil {
+			p.sameHostIPs = make(map[string]struct{})
+		}
+		p.sameHostIPs[ip] = struct{}{}
+	}
+}
+
 // NewProber returns a SOCKS5 prober with sensible defaults.
 func NewProber(opts ...ProberOption) *Prober {
 	p := &Prober{
@@ -122,13 +139,13 @@ func NewProber(opts ...ProberOption) *Prober {
 	return p
 }
 
-func (p *Prober) cacheKey(ip string, port int) string {
-	return fmt.Sprintf("%s:%d", ip, port)
+func (p *Prober) cacheKey(ip string, port int, username, password string) string {
+	return fmt.Sprintf("%s:%d:%s:%s", ip, port, username, password)
 }
 
 // IsHealthy probes SOCKS5 connectivity and auth, using a brief in-memory cache.
 func (p *Prober) IsHealthy(ip string, port int, username, password string) bool {
-	key := p.cacheKey(ip, port)
+	key := p.cacheKey(ip, port, username, password)
 	if healthy, ok := p.cache.get(key); ok {
 		return healthy
 	}
@@ -141,7 +158,7 @@ func (p *Prober) ProbeFresh(ip string, port int, username, password string) bool
 	if !healthy {
 		metrics.IncProbeFailures()
 	}
-	p.cache.set(p.cacheKey(ip, port), healthy)
+	p.cache.set(p.cacheKey(ip, port, username, password), healthy)
 	return healthy
 }
 
@@ -163,10 +180,24 @@ func (p *Prober) probe(ip string, port int, username, password string) bool {
 
 func (p *Prober) probeHosts(ip string) []string {
 	hosts := []string{ip}
-	if p.localFallback && !isLoopbackHost(ip) {
+	if p.allowLoopbackFallback(ip) {
 		hosts = append(hosts, "127.0.0.1")
 	}
 	return hosts
+}
+
+func (p *Prober) allowLoopbackFallback(ip string) bool {
+	if isLoopbackHost(ip) {
+		return false
+	}
+	if p.localFallback {
+		return true
+	}
+	if p.sameHostIPs != nil {
+		_, ok := p.sameHostIPs[ip]
+		return ok
+	}
+	return false
 }
 
 func isLoopbackHost(ip string) bool {

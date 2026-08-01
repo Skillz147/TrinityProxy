@@ -28,6 +28,7 @@ func (m *mockHealthStore) GetNodesByCountry(country string) ([]storage.ProxyNode
 	return nil, nil
 }
 func (m *mockHealthStore) MarkOfflineNodes() error { return nil }
+func (m *mockHealthStore) DeleteNode(id string) error { return nil }
 
 func (m *mockHealthStore) GetOnlineNodes() ([]storage.ProxyNode, error) {
 	m.mu.Lock()

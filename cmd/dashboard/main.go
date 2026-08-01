@@ -14,6 +14,8 @@ import (
 	"github.com/Skillz147/TrinityProxy/internal/dashboard"
 	dashauth "github.com/Skillz147/TrinityProxy/internal/dashboard/auth"
 	"github.com/Skillz147/TrinityProxy/internal/dashboard/deployment"
+	"github.com/Skillz147/TrinityProxy/internal/config"
+	"github.com/Skillz147/TrinityProxy/internal/health"
 	"github.com/Skillz147/TrinityProxy/internal/logutil"
 	"github.com/Skillz147/TrinityProxy/internal/storage"
 )
@@ -115,6 +117,10 @@ func main() {
 	}
 	defer nodeStorage.Close()
 
+	runtimeCfg := config.Load()
+	prober := health.NewProberFromConfig(runtimeCfg)
+	health.NewBackgroundProber(nodeStorage, prober, runtimeCfg.ProbeInterval, log).Start()
+
 	server := dashboard.NewServer(cfg, authStore, deployStore, nodeStorage, log)
 
 	mux := http.NewServeMux()
@@ -191,6 +197,7 @@ func main() {
 		"change_password", "POST /api/auth/change-password",
 		"stats", "GET /api/dashboard/stats",
 		"nodes", "GET /api/dashboard/nodes",
+		"delete_node", "DELETE /api/dashboard/nodes/{id}",
 		"node_credentials", "GET /api/dashboard/nodes/{id}/credentials",
 		"bootstrap_script", "GET /api/dashboard/bootstrap-script",
 		"deploy_commands", "GET /api/dashboard/deploy-commands",
