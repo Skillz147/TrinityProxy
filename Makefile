@@ -1,7 +1,7 @@
 # TrinityProxy Makefile
 # Easy build and deployment for SOCKS5 proxy network
 
-.PHONY: help build build-main build-dashboard build-dashboard-ui build-windows-agent build-darwin-agent build-linux-amd64 build-linux-arm64 install-agent-macos clean install deps test run-controller start-controller run-agent run-agent-dev docker-agent test-agent-docker docker-agent-down setup-dev check-deps format lint setup-system vps-setup setup-api-controller quickstart debug cleanup install-service install-dashboard-service install-production start-service stop-service start start-dev stop stop-production uninstall-production uninstall dashboard dashboard-dev dashboard-init dashboard-run dashboard-up run-dashboard sync-agent-key
+.PHONY: help build build-main build-dashboard build-dashboard-ui build-windows-agent build-darwin-agent build-linux-amd64 build-linux-arm64 install-agent-macos clean install deps test run-controller start-controller run-agent run-agent-dev docker-agent test-agent-docker docker-agent-down setup-dev check-deps format lint setup-system vps-setup setup-api-controller quickstart debug cleanup install-service install-dashboard-service install-production start-service stop-service start start-dev stop stop-production uninstall-production uninstall dashboard dashboard-dev dashboard-init dashboard-run dashboard-up run-dashboard sync-agent-key setup-domain
 
 # Catch accidental "make run dashboard" (space) — the target is run-dashboard (hyphen).
 ifneq (,$(filter dashboard,$(MAKECMDGOALS)))
@@ -21,6 +21,7 @@ help:
 	@echo "  make start          - PRODUCTION: install + run on VPS (deps, build, secrets, systemd)"
 	@echo "  make uninstall-production - Remove prod install (systemd, /opt, data, config); fresh: sudo make start"
 	@echo "  make uninstall          - Alias for uninstall-production"
+	@echo "  make setup-domain   - VPS: interactive domain + Cloudflare wildcard SSL (sudo)"
 	@echo "  make start-dev      - LOCAL DEV: Vite :8080, dashboard API :8081, controller :3100"
 	@echo "  make stop           - Stop local dev servers"
 	@echo "  make run-agent-dev  - macOS/local dev agent (embedded SOCKS :1080, foreground)"
@@ -557,13 +558,18 @@ agent-setup: setup-system deps build install-agent-service
 	fi
 	@echo ""
 
+
+# Interactive domain + Cloudflare wildcard SSL (VPS CLI wrapper around setup-ssl-caddy-cloudflare.sh)
+setup-domain:
+	@chmod +x scripts/setup-domain.sh scripts/setup-ssl-caddy-cloudflare.sh
+	@sudo bash scripts/setup-domain.sh
+
 # Deprecated — SSL is configured via dashboard Cloudflare modal or Caddy scripts (not Make).
 setup-api-controller:
 	@echo "[!] setup-api-controller is deprecated."
 	@echo "[*] Production TLS options:"
 	@echo "    1. Dashboard → Settings → Cloudflare SSL (DNS-01 wildcard, proxied A records)"
-	@echo "    2. sudo PUBLIC_DOMAIN=example.com CLOUDFLARE_API_TOKEN=... SERVER_IP=... EMAIL=... \\"
-	@echo "         ./scripts/setup-ssl-caddy-cloudflare.sh"
+	@echo "    2. sudo make setup-domain  (or sudo ./scripts/setup-domain.sh)"
 	@echo "    3. sudo CONTROLLER_DOMAIN=api.example.com SERVER_IP=... EMAIL=... ./scripts/setup-ssl-caddy.sh"
 	@echo "[*] Controller systemd only: make install-service && sudo systemctl start trinityproxy-controller"
 

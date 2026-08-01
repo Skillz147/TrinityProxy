@@ -49,7 +49,7 @@ sudo make start
 
 **GCP/cloud firewall:** allow inbound TCP **8081**, **3100**, **80**, **443**.
 
-**SSL (server only, no UI):** `sudo PUBLIC_DOMAIN=... CLOUDFLARE_API_TOKEN=... ./scripts/setup-ssl-caddy-cloudflare.sh`
+**Domain + SSL (interactive CLI on VPS):** `sudo ./scripts/setup-domain.sh`
 
 After install: log in → change password → **Settings** → **Deploy Agent**.
 

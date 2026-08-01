@@ -42,7 +42,15 @@ production_install_scripts() {
 	local project_root="$1"
 	local name src
 	production_install -d -o root -g root -m 755 "$OPT_SCRIPTS_DIR"
-	for name in setup-ssl-caddy-cloudflare.sh setup-ssl-caddy.sh; do
+	local lib_src="$project_root/scripts/lib/production-common.sh"
+	if [[ ! -f "$lib_src" ]]; then
+		echo "[-] Missing script: $lib_src" >&2
+		return 1
+	fi
+	production_install -d -o root -g root -m 755 "$OPT_SCRIPTS_DIR/lib"
+	echo "[*] Installing production-common.sh -> $OPT_SCRIPTS_DIR/lib/production-common.sh"
+	production_install -o root -g root -m 644 "$lib_src" "$OPT_SCRIPTS_DIR/lib/production-common.sh"
+	for name in setup-domain.sh setup-ssl-caddy-cloudflare.sh setup-ssl-caddy.sh; do
 		src="$project_root/scripts/$name"
 		if [[ ! -f "$src" ]]; then
 			echo "[-] Missing script: $src" >&2
@@ -746,8 +754,8 @@ production_print_summary() {
 			echo "  (No IPv4 auto-detected — if the URL is wrong, run: hostname -I)"
 		fi
 		echo ""
-		echo "HTTPS: Settings → Cloudflare SSL in dashboard, or:"
-		echo "  sudo /opt/trinityproxy/scripts/setup-ssl-caddy-cloudflare.sh"
+		echo "HTTPS (interactive domain + Cloudflare wildcard SSL):"
+		echo "  sudo ${OPT_SCRIPTS_DIR}/setup-domain.sh"
 	fi
 	production_print_dashboard_login_banner
 	echo ""
