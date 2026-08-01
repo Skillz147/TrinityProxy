@@ -156,44 +156,218 @@ production_random_hex() {
 	"$openssl_bin" rand -hex 32
 }
 
+production_is_ipv4() {
+	local ip="$1"
+	[[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]
+}
+
 production_is_loopback_ipv4() {
 	local ip="$1"
 	[[ "$ip" == 127.* ]]
 }
 
-production_detect_primary_ip() {
-	local ip="" hostname_bin awk_bin ip_bin curl_bin addr
-	hostname_bin="$(production_resolve_cmd hostname 2>/dev/null || true)"
-	awk_bin="$(production_resolve_cmd awk 2>/dev/null || true)"
-	ip_bin="$(production_resolve_cmd ip 2>/dev/null || true)"
-	curl_bin="$(production_resolve_cmd curl 2>/dev/null || true)"
-
-	if [[ -n "$hostname_bin" ]]; then
-		for addr in $($hostname_bin -I 2>/dev/null); do
-			[[ -z "$addr" ]] && continue
-			production_is_loopback_ipv4 "$addr" && continue
-			ip="$addr"
-			break
-		done
-	fi
-	if [[ -z "$ip" && -n "$ip_bin" && -n "$awk_bin" ]]; then
-		ip="$("$ip_bin" -4 route get 1.1.1.1 2>/dev/null | "$awk_bin" '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}')"
-		production_is_loopback_ipv4 "$ip" && ip=""
-	fi
-	if [[ -z "$ip" && -n "$curl_bin" ]]; then
-		ip="$("$curl_bin" -4 -sS --connect-timeout 3 --max-time 5 ifconfig.me 2>/dev/null | tr -d '[:space:]')"
-		if [[ ! "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-			ip=""
+# RFC1918 and link-local (169.254.x.x).
+production_is_private_ip() {
+	local ip="$1"
+	[[ "$ip" =~ ^10\. ]] && return 0
+	[[ "$ip" =~ ^192\.168\. ]] && return 0
+	[[ "$ip" =~ ^169\.254\. ]] && return 0
+	if [[ "$ip" =~ ^172\.([0-9]+)\. ]]; then
+		local second="${BASH_REMATCH[1]}"
+		if (( second >= 16 && second <= 31 )); then
+			return 0
 		fi
 	fi
+	return 1
+}
+
+production_trim_ip() {
+	local ip="$1"
+	ip="${ip//$'\r'/}"
+	ip="${ip//$'\n'/}"
+	ip="${ip// /}"
 	echo "$ip"
 }
 
-# Host clients should use in URLs (IPv4 preferred, else hostname -f).
+production_curl_ip() {
+	local curl_bin="$1"
+	local url="$2"
+	local extra_args=("${@:3}")
+	local ip raw
+	if [[ -z "$curl_bin" ]]; then
+		return 1
+	fi
+	raw="$("$curl_bin" -4 -sf --connect-timeout 3 --max-time 5 "${extra_args[@]}" "$url" 2>/dev/null || true)"
+	ip="$(production_trim_ip "$raw")"
+	if production_is_ipv4 "$ip"; then
+		echo "$ip"
+		return 0
+	fi
+	return 1
+}
+
+production_detect_gcp_external_ip() {
+	local curl_bin="$1"
+	production_curl_ip "$curl_bin" \
+		"http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/access-configs/0/external-ip" \
+		-H "Metadata-Flavor: Google" --connect-timeout 2
+}
+
+production_detect_aws_external_ip() {
+	local curl_bin="$1"
+	production_curl_ip "$curl_bin" \
+		"http://169.254.169.254/latest/meta-data/public-ipv4" --connect-timeout 2
+}
+
+production_detect_public_ip_via_services() {
+	local curl_bin="$1"
+	local url ip
+	if [[ -z "$curl_bin" ]]; then
+		return 1
+	fi
+	for url in https://ifconfig.me https://api.ipify.org https://icanhazip.com; do
+		if ip="$(production_curl_ip "$curl_bin" "$url")"; then
+			if ! production_is_private_ip "$ip" && ! production_is_loopback_ipv4 "$ip"; then
+				echo "$ip"
+				return 0
+			fi
+		fi
+	done
+	return 1
+}
+
+production_collect_hostname_ips() {
+	local hostname_bin="$1"
+	local addr
+	if [[ -z "$hostname_bin" ]]; then
+		return 0
+	fi
+	for addr in $($hostname_bin -I 2>/dev/null); do
+		addr="$(production_trim_ip "$addr")"
+		[[ -z "$addr" ]] && continue
+		production_is_ipv4 "$addr" || continue
+		echo "$addr"
+	done
+}
+
+production_collect_ip_addr_ips() {
+	local ip_bin="$1"
+	local awk_bin="$2"
+	local line addr
+	if [[ -z "$ip_bin" || -z "$awk_bin" ]]; then
+		return 0
+	fi
+	while IFS= read -r line; do
+		addr="$(production_trim_ip "$line")"
+		[[ -z "$addr" ]] && continue
+		production_is_ipv4 "$addr" || continue
+		echo "$addr"
+	done < <("$ip_bin" -4 addr 2>/dev/null | "$awk_bin" '/inet / {print $2}' | "$awk_bin" -F/ '{print $1}')
+}
+
+production_detect_local_public_candidate_ip() {
+	local hostname_bin="$1" ip_bin="$2" awk_bin="$3"
+	local addr seen=""
+	hostname_bin="${hostname_bin:-}"
+	ip_bin="${ip_bin:-}"
+	awk_bin="${awk_bin:-}"
+	for addr in $(production_collect_hostname_ips "$hostname_bin") $(production_collect_ip_addr_ips "$ip_bin" "$awk_bin"); do
+		production_is_loopback_ipv4 "$addr" && continue
+		production_is_private_ip "$addr" && continue
+		[[ "$seen" == *" $addr "* ]] && continue
+		seen=" $seen $addr "
+		echo "$addr"
+		return 0
+	done
+	return 1
+}
+
+production_detect_first_non_loopback_ipv4() {
+	local hostname_bin="$1" ip_bin="$2" awk_bin="$3" curl_bin="$4"
+	local addr ip
+	for addr in $(production_collect_hostname_ips "$hostname_bin") $(production_collect_ip_addr_ips "$ip_bin" "$awk_bin"); do
+		production_is_loopback_ipv4 "$addr" && continue
+		production_is_ipv4 "$addr" || continue
+		echo "$addr"
+		return 0
+	done
+	if [[ -n "$ip_bin" && -n "$awk_bin" ]]; then
+		ip="$("$ip_bin" -4 route get 1.1.1.1 2>/dev/null | "$awk_bin" '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}')"
+		ip="$(production_trim_ip "$ip")"
+		if production_is_ipv4 "$ip" && ! production_is_loopback_ipv4 "$ip"; then
+			echo "$ip"
+			return 0
+		fi
+	fi
+	return 1
+}
+
+# External-facing IP for URLs (metadata, public services, then local non-private).
+production_detect_public_ip() {
+	local curl_bin hostname_bin ip_bin awk_bin ip
+	curl_bin="$(production_resolve_cmd curl 2>/dev/null || true)"
+	hostname_bin="$(production_resolve_cmd hostname 2>/dev/null || true)"
+	ip_bin="$(production_resolve_cmd ip 2>/dev/null || true)"
+	awk_bin="$(production_resolve_cmd awk 2>/dev/null || true)"
+
+	if [[ -n "$curl_bin" ]]; then
+		if ip="$(production_detect_gcp_external_ip "$curl_bin")"; then
+			echo "$ip"
+			return 0
+		fi
+		if ip="$(production_detect_aws_external_ip "$curl_bin")"; then
+			echo "$ip"
+			return 0
+		fi
+		if ip="$(production_detect_public_ip_via_services "$curl_bin")"; then
+			echo "$ip"
+			return 0
+		fi
+	fi
+	if ip="$(production_detect_local_public_candidate_ip "$hostname_bin" "$ip_bin" "$awk_bin")"; then
+		echo "$ip"
+		return 0
+	fi
+	return 1
+}
+
+# Prefer public IP; fall back to private/local when nothing else is available.
+production_detect_primary_ip() {
+	local ip hostname_bin ip_bin awk_bin curl_bin
+	hostname_bin="$(production_resolve_cmd hostname 2>/dev/null || true)"
+	ip_bin="$(production_resolve_cmd ip 2>/dev/null || true)"
+	awk_bin="$(production_resolve_cmd awk 2>/dev/null || true)"
+	curl_bin="$(production_resolve_cmd curl 2>/dev/null || true)"
+
+	if ip="$(production_detect_public_ip)"; then
+		echo "$ip"
+		return 0
+	fi
+	if ip="$(production_detect_first_non_loopback_ipv4 "$hostname_bin" "$ip_bin" "$awk_bin" "$curl_bin")"; then
+		echo "$ip"
+		return 0
+	fi
+	return 1
+}
+
+production_warn_private_access_ip_once() {
+	local ip="$1"
+	if [[ -z "$ip" ]] || ! production_is_private_ip "$ip"; then
+		return 0
+	fi
+	if [[ "${PRODUCTION_PRIVATE_IP_WARNED:-}" == "1" ]]; then
+		return 0
+	fi
+	PRODUCTION_PRIVATE_IP_WARNED=1
+	echo "[!] Could not detect public IP — using ${ip}. Set CONTROLLER_URL manually or use GCP external IP." >&2
+}
+
+# Host clients should use in URLs (public IP when possible, else hostname -f).
 production_resolve_access_host() {
 	local ip host hostname_bin
 	ip="$(production_detect_primary_ip)"
 	if [[ -n "$ip" ]]; then
+		production_warn_private_access_ip_once "$ip"
 		echo "$ip"
 		return 0
 	fi
@@ -517,6 +691,11 @@ production_print_summary() {
 	echo ""
 	echo "Controller secrets file: $CONTROLLER_ENV"
 	echo "  (TRINITY_API_KEY, TRINITY_AGENT_KEY, API_PORT, DB_PATH, CONTROLLER_URL)"
+	echo "  CONTROLLER_URL defaults to the detected access IP (public when available)."
+	echo "  Agents on the same VPC/LAN may set CONTROLLER_URL to an internal IP instead."
+	if [[ -n "$ip_detected" ]] && production_is_private_ip "$ip_detected"; then
+		echo "  Using private IP ${ip_detected} in URLs — edit CONTROLLER_URL for internet-facing agents."
+	fi
 	echo ""
 	echo "Service commands:"
 	echo "  sudo systemctl status trinityproxy-controller trinityproxy-dashboard"
