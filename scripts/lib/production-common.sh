@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Shared helpers for TrinityProxy production bootstrap (sourced, not executed).
 
+# sudo/systemd subshells often omit /usr/sbin from PATH; user tools live there.
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
+
 TRINITY_DIR="${TRINITY_DIR:-/etc/trinityproxy}"
 CONTROLLER_ENV="${CONTROLLER_ENV:-$TRINITY_DIR/controller.env}"
 STATE_DIR="${STATE_DIR:-/var/lib/trinityproxy}"
@@ -8,6 +11,40 @@ DASHBOARD_USER="${DASHBOARD_USER:-trinityproxy}"
 API_PORT="${API_PORT:-3100}"
 DB_PATH="${DB_PATH:-$STATE_DIR/trinityproxy.db}"
 DASHBOARD_PORT="${DASHBOARD_PORT:-8081}"
+
+production_find_adduser() {
+	local p
+	for p in /usr/sbin/adduser /sbin/adduser; do
+		if [[ -x "$p" ]]; then
+			echo "$p"
+			return 0
+		fi
+	done
+	if command -v adduser >/dev/null 2>&1; then
+		command -v adduser
+		return 0
+	fi
+	return 1
+}
+
+production_find_useradd() {
+	local p
+	for p in /usr/sbin/useradd /sbin/useradd; do
+		if [[ -x "$p" ]]; then
+			echo "$p"
+			return 0
+		fi
+	done
+	if command -v useradd >/dev/null 2>&1; then
+		command -v useradd
+		return 0
+	fi
+	return 1
+}
+
+production_have_user_mgmt() {
+	production_find_adduser >/dev/null 2>&1 || production_find_useradd >/dev/null 2>&1
+}
 
 production_random_hex() {
 	openssl rand -hex 32
@@ -39,16 +76,20 @@ production_read_env_value() {
 production_create_system_user() {
 	local user="${1:-$DASHBOARD_USER}"
 	local home="${2:-$STATE_DIR}"
+	local adduser_bin useradd_bin
 
 	if id "$user" &>/dev/null; then
 		return 0
 	fi
 
 	echo "[*] Creating system user: $user"
-	if command -v adduser >/dev/null 2>&1; then
-		adduser --system --group --home "$home" --no-create-home --disabled-login "$user"
-	elif command -v useradd >/dev/null 2>&1; then
-		useradd --system --no-create-home --shell /usr/sbin/nologin \
+	adduser_bin="$(production_find_adduser 2>/dev/null || true)"
+	useradd_bin="$(production_find_useradd 2>/dev/null || true)"
+
+	if [[ -n "$adduser_bin" ]]; then
+		"$adduser_bin" --system --group --home "$home" --no-create-home --disabled-login "$user"
+	elif [[ -n "$useradd_bin" ]]; then
+		"$useradd_bin" --system --no-create-home --shell /usr/sbin/nologin \
 			--home-dir "$home" "$user"
 	else
 		echo "[-] Error: neither adduser nor useradd available (install adduser or passwd)"

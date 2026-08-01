@@ -100,7 +100,7 @@ ensure_system_deps_debian() {
 	else
 		echo "[+] gcc present"
 	fi
-	if command -v adduser >/dev/null 2>&1 || command -v useradd >/dev/null 2>&1; then
+	if production_have_user_mgmt; then
 		echo "[+] adduser/useradd present"
 	else
 		APT_INSTALL_QUEUE+=("adduser" "passwd")
@@ -122,7 +122,7 @@ ensure_system_deps_debian() {
 			exit 1
 		fi
 	done
-	if ! command -v adduser >/dev/null 2>&1 && ! command -v useradd >/dev/null 2>&1; then
+	if ! production_have_user_mgmt; then
 		echo "[-] Required user management tool missing (adduser or useradd)"
 		exit 1
 	fi
@@ -185,10 +185,14 @@ ensure_system_deps() {
 	ensure_command wget wget
 	ensure_command sqlite3 sqlite3 sqlite
 	ensure_command openssl openssl
-	if command -v adduser >/dev/null 2>&1 || command -v useradd >/dev/null 2>&1; then
+	if production_have_user_mgmt; then
 		echo "[+] adduser/useradd present"
 	else
 		ensure_command useradd passwd || ensure_command adduser adduser
+		if ! production_have_user_mgmt; then
+			echo "[-] Required user management tool missing (adduser or useradd)"
+			exit 1
+		fi
 	fi
 	if command -v gcc >/dev/null 2>&1; then
 		echo "[+] gcc present"
@@ -263,9 +267,9 @@ echo "[7/10] Bootstrapping dashboard, syncing keys, and starting services..."
 run_as_root bash -c "
 	set -euo pipefail
 	cd '$ROOT'
-	export PATH='/usr/local/go/bin:\$PATH'
 	# shellcheck source=scripts/lib/production-common.sh
 	source '$ROOT/scripts/lib/production-common.sh'
+	export PATH="/usr/local/go/bin:\$PATH"
 	production_init_dashboard_admin
 	production_sync_agent_key_to_controller_env
 	systemctl daemon-reload
