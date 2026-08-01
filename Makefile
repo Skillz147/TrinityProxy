@@ -91,11 +91,12 @@ build-dashboard-ui:
 
 # Build dashboard server binary (all dashboard packages — not only main.go)
 DASHBOARD_GO_SRCS := $(shell find cmd/dashboard internal/dashboard -name '*.go' 2>/dev/null)
-DASHBOARD_UI_SRCS := $(shell find cmd/dashboard/dist -type f 2>/dev/null)
+# UI embed tree: do not list hashed Vite assets (find at parse time goes stale after rsync --delete).
+DASHBOARD_UI_STAMP := cmd/dashboard/dist/.ui-sync-stamp
 
 build-dashboard: build-dashboard-ui $(DASHBOARD_BINARY)
 
-$(DASHBOARD_BINARY): $(DASHBOARD_GO_SRCS) $(DASHBOARD_UI_SRCS) | $(BUILD_DIR)/.dir
+$(DASHBOARD_BINARY): $(DASHBOARD_GO_SRCS) $(DASHBOARD_UI_STAMP) | $(BUILD_DIR)/.dir
 	@echo "[*] Building dashboard server..."
 	@export PATH="/usr/local/go/bin:$$PATH"; go build $(LDFLAGS) -o $(DASHBOARD_BINARY) ./cmd/dashboard
 

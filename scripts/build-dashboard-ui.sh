@@ -26,6 +26,7 @@ embed_matches_src() {
 sync_dist_to_embed() {
 	if embed_matches_src; then
 		echo "[+] Embed UI already up to date at $EMBED_DIST"
+		touch "$EMBED_DIST/.ui-sync-stamp"
 		return 0
 	fi
 
@@ -42,6 +43,7 @@ sync_dist_to_embed() {
 		cp -a "$SRC_DIST"/. "$EMBED_DIST/"
 	fi
 	echo "[+] Synced UI assets to $EMBED_DIST (go:embed in cmd/dashboard)"
+	touch "$EMBED_DIST/.ui-sync-stamp"
 }
 
 build_with_npm() {
