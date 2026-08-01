@@ -10,6 +10,7 @@ Group=trinityproxy
 WorkingDirectory=/var/lib/trinityproxy
 Environment=TRINITY_ROLE=controller
 Environment=TRINITY_NONINTERACTIVE=1
+Environment=API_BIND_ADDR=0.0.0.0
 Environment=DB_PATH=/var/lib/trinityproxy/trinityproxy.db
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 EnvironmentFile=-/etc/trinityproxy/controller.env

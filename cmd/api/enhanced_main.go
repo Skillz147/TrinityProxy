@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand"
+	"net"
 	"net/http"
 	"os"
 	"time"
@@ -333,7 +334,13 @@ func main() {
 		"metrics", "GET /metrics",
 	)
 
-	if err := http.ListenAndServe(cfg.ListenAddr(), nil); err != nil {
+	addr := cfg.ListenAddr()
+	ln, err := net.Listen("tcp4", addr)
+	if err != nil {
+		log.Error("API port already in use or unavailable (IPv4 bind failed)", "err", err, "addr", addr)
+		os.Exit(1)
+	}
+	if err := http.Serve(ln, nil); err != nil {
 		log.Error("API server failed", "err", err)
 		os.Exit(1)
 	}

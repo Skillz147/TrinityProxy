@@ -15,6 +15,7 @@ const (
 	defaultHeartbeatInterval = 60 * time.Second
 	defaultProbeInterval     = 60 * time.Second
 	defaultControllerURL     = ""
+	defaultAPIBindAddr       = "0.0.0.0"
 )
 
 // Config holds runtime settings loaded from environment variables.
@@ -38,11 +39,12 @@ type Config struct {
 	ProbeInterval     time.Duration
 	APIKey            string
 	AgentKey          string
+	APIBindAddr       string
 }
 
 // Load reads configuration from environment variables with sensible defaults.
 //
-// Env vars: CONTROLLER_URL, API_PORT, DB_PATH, HEARTBEAT_INTERVAL, PROBE_INTERVAL,
+// Env vars: CONTROLLER_URL, API_PORT, API_BIND_ADDR, DB_PATH, HEARTBEAT_INTERVAL, PROBE_INTERVAL,
 // TRINITY_API_KEY, TRINITY_AGENT_KEY, TRINITY_ENV (production|prod), TRINITY_NONINTERACTIVE
 func Load() Config {
 	return Config{
@@ -53,6 +55,7 @@ func Load() Config {
 		ProbeInterval:     envDuration("PROBE_INTERVAL", defaultProbeInterval),
 		APIKey:            envString("TRINITY_API_KEY", ""),
 		AgentKey:          envString("TRINITY_AGENT_KEY", ""),
+		APIBindAddr:       envString("API_BIND_ADDR", defaultAPIBindAddr),
 	}
 }
 
@@ -62,9 +65,13 @@ func (c Config) HeartbeatURL() string {
 	return base + "/api/heartbeat"
 }
 
-// ListenAddr returns the API server bind address (e.g. ":3100").
+// ListenAddr returns the API server bind host:port (default 0.0.0.0:3100).
 func (c Config) ListenAddr() string {
-	return fmt.Sprintf(":%d", c.APIPort)
+	host := strings.TrimSpace(c.APIBindAddr)
+	if host == "" {
+		host = defaultAPIBindAddr
+	}
+	return fmt.Sprintf("%s:%d", host, c.APIPort)
 }
 
 // IsProduction reports whether the process runs in a non-dev deployment context.

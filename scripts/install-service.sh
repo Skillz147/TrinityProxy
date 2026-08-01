@@ -76,9 +76,10 @@ production_install_systemd_unit "$ROOT/scripts/trinityproxy-controller.service" 
 # Reload systemd and enable the service
 echo "[*] Enabling TrinityProxy Controller service..."
 if [[ -f .env.controller ]] && [[ ! -f /etc/trinityproxy/controller.env ]]; then
-	production_install -d -m 750 /etc/trinityproxy
+	production_install -d -o root -g "$CONTROLLER_GROUP" -m 750 /etc/trinityproxy
 	grep -E '^export TRINITY_' .env.controller | sed 's/^export //' > /etc/trinityproxy/controller.env
 	chmod 640 /etc/trinityproxy/controller.env
+	chown root:"$CONTROLLER_GROUP" /etc/trinityproxy/controller.env 2>/dev/null || true
 	echo "[+] Wrote /etc/trinityproxy/controller.env from .env.controller"
 elif [[ -f /etc/trinityproxy/controller.env ]]; then
 	echo "[*] Using existing /etc/trinityproxy/controller.env"

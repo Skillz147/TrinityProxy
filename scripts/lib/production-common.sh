@@ -79,6 +79,16 @@ production_install() {
 	"$bin" "$@"
 }
 
+production_journalctl() {
+	local bin
+	bin="$(production_resolve_cmd journalctl 2>/dev/null || true)"
+	if [[ -z "$bin" ]]; then
+		echo "[-] journalctl not found" >&2
+		return 1
+	fi
+	"$bin" "$@"
+}
+
 production_systemctl() {
 	local bin
 	bin="$(production_resolve_cmd systemctl)" || {
@@ -246,6 +256,22 @@ production_ensure_state_dir() {
 	"$install_bin" -d -o "$DASHBOARD_USER" -g "$DASHBOARD_USER" -m 750 "$STATE_DIR"
 }
 
+production_fixup_state_dir() {
+	local chown_bin chmod_bin
+	production_ensure_trinityproxy_user
+	production_ensure_state_dir
+	chown_bin="$(production_resolve_cmd chown 2>/dev/null || true)"
+	chmod_bin="$(production_resolve_cmd chmod 2>/dev/null || true)"
+	if [[ -n "$chown_bin" ]]; then
+		"$chown_bin" -R "$DASHBOARD_USER:$DASHBOARD_USER" "$STATE_DIR" 2>/dev/null || true
+	fi
+	if [[ -n "$chmod_bin" ]]; then
+		"$chmod_bin" 750 "$STATE_DIR" 2>/dev/null || true
+		find "$STATE_DIR" -maxdepth 1 -type f -name '*.db' -exec "$chmod_bin" 640 {} + 2>/dev/null || true
+	fi
+}
+
+
 production_ensure_controller_env() {
 	echo "[*] Preparing controller secrets..."
 	local install_bin chmod_bin chown_bin
@@ -259,7 +285,7 @@ production_ensure_controller_env() {
 	}
 	chown_bin="$(production_resolve_cmd chown 2>/dev/null || true)"
 
-	"$install_bin" -d -m 750 "$TRINITY_DIR"
+	"$install_bin" -d -o root -g "$DASHBOARD_USER" -m 750 "$TRINITY_DIR"
 
 	local api_key agent_key controller_url
 	api_key="$(production_read_env_value "$CONTROLLER_ENV" TRINITY_API_KEY || true)"

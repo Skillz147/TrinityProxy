@@ -290,15 +290,19 @@ run_as_root bash -c "
 	source '$ROOT/scripts/lib/production-common.sh'
 	production_init_dashboard_admin
 	production_sync_agent_key_to_controller_env
+	production_fixup_state_dir
 	production_install_binaries "$ROOT" trinityproxy-api trinityproxy-dashboard
 	production_systemctl daemon-reload
 	production_systemctl enable trinityproxy-controller trinityproxy-dashboard
-	production_systemctl restart trinityproxy-controller
 	production_systemctl restart trinityproxy-dashboard
+	production_systemctl restart trinityproxy-controller
 	sleep 2
 	if ! production_systemctl is-active trinityproxy-controller >/dev/null 2>&1 || ! production_systemctl is-active trinityproxy-dashboard >/dev/null 2>&1; then
 		echo '[!] One or more services failed to start:'
 		production_systemctl status trinityproxy-controller trinityproxy-dashboard --no-pager || true
+		echo ''
+		echo '[!] trinityproxy-controller journal (last 20 lines):'
+		production_journalctl -u trinityproxy-controller -n 20 --no-pager || true
 		exit 1
 	fi
 	production_print_summary
