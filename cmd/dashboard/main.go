@@ -21,16 +21,29 @@ import (
 func main() {
 	initOnly := false
 	resetAdmin := false
+	syncDeployment := false
 	for _, arg := range os.Args[1:] {
 		switch arg {
 		case "--init-only":
 			initOnly = true
 		case "--reset-admin":
 			resetAdmin = true
+		case "--sync-deployment":
+			syncDeployment = true
 		}
 	}
-	if initOnly && resetAdmin {
-		fmt.Fprintln(os.Stderr, "error: use only one of --init-only or --reset-admin")
+	modes := 0
+	if initOnly {
+		modes++
+	}
+	if resetAdmin {
+		modes++
+	}
+	if syncDeployment {
+		modes++
+	}
+	if modes > 1 {
+		fmt.Fprintln(os.Stderr, "error: use only one of --init-only, --reset-admin, or --sync-deployment")
 		os.Exit(2)
 	}
 
@@ -39,6 +52,11 @@ func main() {
 
 	if resetAdmin {
 		runResetAdmin(log, cfg)
+		return
+	}
+
+	if syncDeployment {
+		runSyncDeployment(log, cfg)
 		return
 	}
 
@@ -80,6 +98,16 @@ func main() {
 		logutil.Fatal(log, "failed to open deployment store", "err", err, "db", cfg.DBPath)
 	}
 	defer deployStore.Close()
+
+	if result, err := deployStore.SyncFromExternal(deploymentSyncOptions(false)); err != nil {
+		log.Warn("deployment settings sync skipped", "err", err)
+	} else if result.Updated {
+		log.Info("deployment settings synced from host config",
+			"public_domain", result.PublicDomain,
+			"controller_url", result.ControllerURL,
+			"ssl_mode", result.SSLMode,
+		)
+	}
 
 	nodeStorage, err := storage.NewNodeStorage(cfg.NodesDBPath)
 	if err != nil {
@@ -219,6 +247,51 @@ func registerStaticUI(mux *http.ServeMux, staticDir string, log *slog.Logger) {
 }
 
 
+
+
+
+func deploymentSyncOptions(force bool) deployment.SyncOptions {
+	return deployment.SyncOptions{
+		Sources: deployment.ExternalSources{
+			CaddySitePath:     envStringDefault("TRINITY_CADDY_SITE_PATH", deployment.DefaultCaddySitePath),
+			ControllerEnvPath: envStringDefault("TRINITY_CONTROLLER_ENV_PATH", deployment.DefaultControllerEnvPath),
+		},
+		OverrideDomain:        strings.TrimSpace(os.Getenv("TRINITY_SYNC_PUBLIC_DOMAIN")),
+		OverrideSSLMode:       strings.TrimSpace(os.Getenv("TRINITY_SYNC_SSL_MODE")),
+		OverrideControllerURL: strings.TrimSpace(os.Getenv("TRINITY_SYNC_CONTROLLER_URL")),
+		Force:                 force || strings.TrimSpace(os.Getenv("TRINITY_SYNC_FORCE")) == "1",
+	}
+}
+
+func envStringDefault(key, fallback string) string {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		return v
+	}
+	return fallback
+}
+
+func runSyncDeployment(log *slog.Logger, cfg dashboard.Config) {
+	deployStore, err := deployment.NewStore(cfg.DBPath)
+	if err != nil {
+		logutil.Fatal(log, "failed to open deployment store", "err", err, "db", cfg.DBPath)
+	}
+	defer deployStore.Close()
+
+	force := strings.TrimSpace(os.Getenv("TRINITY_SYNC_FORCE")) == "1" || strings.TrimSpace(os.Getenv("TRINITY_SYNC_PUBLIC_DOMAIN")) != ""
+	result, err := deployStore.SyncFromExternal(deploymentSyncOptions(force))
+	if err != nil {
+		logutil.Fatal(log, "failed to sync deployment settings", "err", err)
+	}
+
+	if result.Updated {
+		fmt.Println("TRINITY_DEPLOYMENT_SYNCED=1")
+	} else {
+		fmt.Println("TRINITY_DEPLOYMENT_SYNCED=0")
+	}
+	fmt.Printf("TRINITY_PUBLIC_DOMAIN=%s\n", result.PublicDomain)
+	fmt.Printf("TRINITY_CONTROLLER_URL=%s\n", result.ControllerURL)
+	fmt.Printf("TRINITY_SSL_MODE=%s\n", result.SSLMode)
+}
 
 func runResetAdmin(log *slog.Logger, cfg dashboard.Config) {
 	if _, err := os.Stat(cfg.DBPath); err != nil {

@@ -306,6 +306,12 @@ EOF
 
 handle_ssl_failure() {
 	local ssl_rc="$1"
+	if [[ -n "${PUBLIC_DOMAIN:-}" ]]; then
+		if declare -F production_update_controller_env_domain >/dev/null 2>&1; then
+			production_update_controller_env_domain "$PUBLIC_DOMAIN" || true
+		fi
+		sync_dashboard_domain_settings "none" ""
+	fi
 	err "SSL / Caddy provisioning failed (exit ${ssl_rc})."
 	echo ""
 	echo "[!] Caddy journal (last 20 lines):"
@@ -338,6 +344,24 @@ handle_ssl_failure() {
 	exit 1
 }
 
+
+sync_dashboard_domain_settings() {
+	local ssl_mode="${1:-}"
+	local controller_url="${2:-}"
+	if declare -F production_sync_deployment_settings >/dev/null 2>&1; then
+		production_sync_deployment_settings "$PUBLIC_DOMAIN" "$ssl_mode" "$controller_url" || 			err "Dashboard settings sync failed — run: sudo make sync-deployment-settings"
+		return 0
+	fi
+	local script="${SSL_SCRIPT%/*}/sync-deployment-settings.sh"
+	if [[ -f "$script" ]]; then
+		export TRINITY_SYNC_PUBLIC_DOMAIN="$PUBLIC_DOMAIN"
+		export TRINITY_SYNC_FORCE=1
+		[[ -n "$ssl_mode" ]] && export TRINITY_SYNC_SSL_MODE="$ssl_mode"
+		[[ -n "$controller_url" ]] && export TRINITY_SYNC_CONTROLLER_URL="$controller_url"
+		bash "$script" || err "Dashboard settings sync failed — run: sudo make sync-deployment-settings"
+	fi
+}
+
 run_ssl_engine() {
 	if [[ ! -f "$SSL_SCRIPT" ]]; then
 		err "SSL setup script not found: $SSL_SCRIPT"
@@ -358,6 +382,8 @@ run_ssl_engine() {
 	if [[ $ssl_rc -ne 0 ]]; then
 		handle_ssl_failure "$ssl_rc"
 	fi
+
+	sync_dashboard_domain_settings "caddy" "https://api.${PUBLIC_DOMAIN}"
 }
 
 main() {

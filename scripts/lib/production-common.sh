@@ -690,6 +690,72 @@ EOF
 	echo "[+] Wrote $CONTROLLER_ENV"
 }
 
+production_update_controller_env_domain() {
+	local domain="${1:-}"
+	local controller_url="${2:-}"
+	domain="${domain// /}"
+	if [[ -z "$domain" ]]; then
+		return 0
+	fi
+	if [[ ! -f "$CONTROLLER_ENV" ]]; then
+		production_ensure_controller_env || return 1
+	fi
+	local api_key agent_key api_port db_path public_domain current_url chmod_bin chown_bin
+	chmod_bin="$(production_resolve_cmd chmod 2>/dev/null || true)"
+	chown_bin="$(production_resolve_cmd chown 2>/dev/null || true)"
+	api_key="$(production_read_env_value "$CONTROLLER_ENV" TRINITY_API_KEY)"
+	agent_key="$(production_read_env_value "$CONTROLLER_ENV" TRINITY_AGENT_KEY)"
+	api_port="$(production_read_env_value "$CONTROLLER_ENV" API_PORT || echo "$API_PORT")"
+	db_path="$(production_read_env_value "$CONTROLLER_ENV" DB_PATH || echo "$DB_PATH")"
+	public_domain="$(production_read_env_value "$CONTROLLER_ENV" PUBLIC_DOMAIN)"
+	current_url="$(production_read_env_value "$CONTROLLER_ENV" CONTROLLER_URL)"
+	[[ -n "$public_domain" ]] || public_domain="$domain"
+	if [[ -n "$controller_url" ]]; then
+		current_url="$controller_url"
+	elif [[ -z "$current_url" ]]; then
+		current_url="https://api.${domain}"
+	fi
+	cat >"$CONTROLLER_ENV" <<EOF
+TRINITY_API_KEY=${api_key}
+TRINITY_AGENT_KEY=${agent_key}
+API_PORT=${api_port}
+DB_PATH=${db_path}
+PUBLIC_DOMAIN=${public_domain}
+CONTROLLER_URL=${current_url}
+EOF
+	[[ -n "$chmod_bin" ]] && "$chmod_bin" 640 "$CONTROLLER_ENV"
+	if [[ -n "$chown_bin" ]]; then
+		"$chown_bin" root:"$DASHBOARD_USER" "$CONTROLLER_ENV" 2>/dev/null || true
+	fi
+	echo "[+] Updated $CONTROLLER_ENV (PUBLIC_DOMAIN=${public_domain}, CONTROLLER_URL=${current_url})"
+}
+
+production_sync_deployment_settings() {
+	local domain="${1:-${PUBLIC_DOMAIN:-}}"
+	local ssl_mode="${2:-}"
+	local controller_url="${3:-}"
+	local script="${OPT_SCRIPTS_DIR:-/opt/trinityproxy/scripts}/sync-deployment-settings.sh"
+	if [[ -n "${ROOT:-}" && -f "$ROOT/scripts/sync-deployment-settings.sh" ]]; then
+		script="$ROOT/scripts/sync-deployment-settings.sh"
+	fi
+	if [[ ! -f "$script" ]]; then
+		echo "[!] sync-deployment-settings.sh not found — dashboard domain not updated" >&2
+		return 1
+	fi
+	if [[ -n "$domain" ]]; then
+		export TRINITY_SYNC_PUBLIC_DOMAIN="$domain"
+		export TRINITY_SYNC_FORCE=1
+	fi
+	if [[ -n "$ssl_mode" ]]; then
+		export TRINITY_SYNC_SSL_MODE="$ssl_mode"
+	fi
+	if [[ -n "$controller_url" ]]; then
+		export TRINITY_SYNC_CONTROLLER_URL="$controller_url"
+	fi
+	export DASHBOARD_DB_PATH="${DASHBOARD_DB_PATH:-$STATE_DIR/dashboard.db}"
+	bash "$script"
+}
+
 production_sync_agent_key_to_controller_env() {
 	local db="$STATE_DIR/dashboard.db"
 	local sqlite3_bin
@@ -716,11 +782,14 @@ production_sync_agent_key_to_controller_env() {
 	controller_url="$(production_read_env_value "$CONTROLLER_ENV" CONTROLLER_URL)"
 	api_port="$(production_read_env_value "$CONTROLLER_ENV" API_PORT || echo "$API_PORT")"
 	db_path="$(production_read_env_value "$CONTROLLER_ENV" DB_PATH || echo "$DB_PATH")"
+	local public_domain
+	public_domain="$(production_read_env_value "$CONTROLLER_ENV" PUBLIC_DOMAIN || true)"
 	cat >"$CONTROLLER_ENV" <<EOF
 TRINITY_API_KEY=${api_key}
 TRINITY_AGENT_KEY=${key}
 API_PORT=${api_port}
 DB_PATH=${db_path}
+PUBLIC_DOMAIN=${public_domain}
 CONTROLLER_URL=${controller_url}
 EOF
 	"$chmod_bin" 640 "$CONTROLLER_ENV"

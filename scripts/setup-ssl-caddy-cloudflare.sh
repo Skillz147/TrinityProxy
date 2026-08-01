@@ -13,6 +13,11 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# shellcheck source=scripts/lib/production-common.sh
+source "$ROOT/scripts/lib/production-common.sh"
+
 PUBLIC_DOMAIN="${PUBLIC_DOMAIN:-}"
 CLOUDFLARE_API_TOKEN="${CLOUDFLARE_API_TOKEN:-}"
 SERVER_IP="${SERVER_IP:-}"
@@ -404,6 +409,9 @@ main() {
     echo "  curl -sS https://${API_HOST}/health"
     echo "  systemctl status caddy"
     echo "  journalctl -u caddy -f"
+
+    production_update_controller_env_domain "$PUBLIC_DOMAIN" "https://${API_HOST}" || true
+    production_sync_deployment_settings "$PUBLIC_DOMAIN" "caddy" "https://${API_HOST}" ||         echo "[!] Dashboard deployment settings were not updated — run: sudo make sync-deployment-settings"
 }
 
 main "$@"
