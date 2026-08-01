@@ -13,7 +13,7 @@
     TRINITY_AGENT_KEY=your-shared-secret
 
   Optional:
-    TRINITY_SOCKS_PORT=1080              SOCKS listen port (default 1080)
+    TRINITY_SOCKS_PORT=10855              Explicit SOCKS port (default: auto-pick free port in 10800-10999)
     TRINITY_SOCKS_USER / TRINITY_SOCKS_PASSWORD  Override auto-generated SOCKS credentials
     TRINITY_LOCAL_BINARY=C:\path\to\trinityproxy.exe   Use a pre-built binary
     TRINITY_DOWNLOAD_URL=https://.../trinityproxy.exe  Download instead of copy
@@ -50,9 +50,10 @@ $ServiceName = "TrinityProxyAgent"
 $ServiceDisplayName = "TrinityProxy Agent"
 $BinaryName = "trinityproxy.exe"
 $WrapperName = "start-agent.cmd"
-$DefaultSocksPort = 1080
+$DefaultSocksPortStart = 10800
+$DefaultSocksPortEnd = 10999
 # Bump when bootstrap cache under %TEMP%\TrinityProxy must be refreshed.
-$ScriptVersion = "3"
+$ScriptVersion = "4"
 $DefaultReleaseBinaryUrl = "https://github.com/Skillz147/TrinityProxy/releases/download/latest/trinityproxy-windows-amd64.exe"
 
 
@@ -290,17 +291,108 @@ function Assert-RepoScriptLocation {
 }
 
 
+function Test-TcpPortAvailable([int]$Port) {
+    $listener = $null
+    try {
+        $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Any, $Port)
+        $listener.Start()
+        return $true
+    }
+    catch {
+        return $false
+    }
+    finally {
+        if ($listener) { $listener.Stop() }
+    }
+}
+
+function Find-FreeTcpPort {
+    param(
+        [int]$StartPort = $DefaultSocksPortStart,
+        [int]$EndPort = $DefaultSocksPortEnd
+    )
+
+    for ($port = $StartPort; $port -le $EndPort; $port++) {
+        if (Test-TcpPortAvailable -Port $port) {
+            return $port
+        }
+    }
+
+    throw "No free TCP port found in range ${StartPort}-${EndPort}"
+}
+
+function New-RandomHex([int]$ByteCount) {
+    $bytes = New-Object byte[] $ByteCount
+    [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+    return ([BitConverter]::ToString($bytes) -replace '-', '').ToLower()
+}
+
 function Resolve-SocksPort {
+    param([string]$TargetDir)
+
     $raw = if ($SocksPort) { $SocksPort } else { $env:TRINITY_SOCKS_PORT }
-    if (-not $raw -or ($raw -match '^\s*-')) {
-        return $DefaultSocksPort
+    if ($raw -and ($raw -notmatch '^\s*-')) {
+        $parsed = 0
+        if ([int]::TryParse($raw.Trim(), [ref]$parsed) -and $parsed -ge 1 -and $parsed -le 65535) {
+            return $parsed
+        }
+        Write-Warn "Ignoring invalid TRINITY_SOCKS_PORT (got: $raw)"
     }
-    $parsed = 0
-    if ([int]::TryParse($raw.Trim(), [ref]$parsed) -and $parsed -ge 1 -and $parsed -le 65535) {
-        return $parsed
+
+    $portFile = Join-Path $TargetDir "trinityproxy-port"
+    if (Test-Path -LiteralPath $portFile) {
+        $saved = (Get-Content -LiteralPath $portFile -Raw -ErrorAction SilentlyContinue).Trim()
+        $parsed = 0
+        if ([int]::TryParse($saved, [ref]$parsed) -and $parsed -ge 1 -and $parsed -le 65535) {
+            if (Test-TcpPortAvailable -Port $parsed) {
+                return $parsed
+            }
+            Write-Warn "Previously assigned port $parsed is in use; selecting a new port"
+        }
     }
-    Write-Warn "Ignoring invalid TRINITY_SOCKS_PORT (got: $raw); using $DefaultSocksPort"
-    return $DefaultSocksPort
+
+    return Find-FreeTcpPort
+}
+
+function Ensure-SocksCredentials {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$TargetDir,
+        [Parameter(Mandatory = $true)]
+        [int]$Port
+    )
+
+    $userFile = Join-Path $TargetDir "trinityproxy-username"
+    $passFile = Join-Path $TargetDir "trinityproxy-password"
+    $portFile = Join-Path $TargetDir "trinityproxy-port"
+
+    $user = $null
+    $pass = $null
+
+    if ($env:TRINITY_SOCKS_USER -and $env:TRINITY_SOCKS_PASSWORD) {
+        $user = $env:TRINITY_SOCKS_USER.Trim()
+        $pass = $env:TRINITY_SOCKS_PASSWORD.Trim()
+    }
+    elseif ((Test-Path -LiteralPath $userFile) -and (Test-Path -LiteralPath $passFile)) {
+        $user = (Get-Content -LiteralPath $userFile -Raw -ErrorAction Stop).Trim()
+        $pass = (Get-Content -LiteralPath $passFile -Raw -ErrorAction Stop).Trim()
+    }
+    else {
+        $user = New-RandomHex -ByteCount 8
+        $pass = New-RandomHex -ByteCount 16
+    }
+
+    if (-not $user -or -not $pass) {
+        throw "Failed to resolve SOCKS credentials"
+    }
+
+    Set-Content -Path $userFile -Value $user -Encoding ASCII -NoNewline
+    Set-Content -Path $passFile -Value $pass -Encoding ASCII -NoNewline
+    Set-Content -Path $portFile -Value $Port -Encoding ASCII -NoNewline
+
+    $script:SocksUser = $user
+    $script:SocksPass = $pass
+    return @{ User = $user; Pass = $pass }
 }
 
 function Resolve-SourceBinary {
@@ -380,7 +472,7 @@ function Ensure-FirewallRule([int]$Port) {
     Write-Ok "Firewall rule added for inbound TCP port $Port"
 }
 
-function Write-WrapperScript([string]$TargetDir, [int]$Port) {
+function Write-WrapperScript([string]$TargetDir, [int]$Port, [string]$SocksUser, [string]$SocksPass) {
     $wrapperPath = Join-Path $TargetDir $WrapperName
     $exePath = Join-Path $TargetDir $BinaryName
 
@@ -391,18 +483,14 @@ function Write-WrapperScript([string]$TargetDir, [int]$Port) {
         "set TRINITY_NONINTERACTIVE=1",
         "set TRINITY_SKIP_INSTALLER=1",
         ("set TRINITY_SOCKS_PORT=" + $Port),
+        ("set TRINITY_SOCKS_USER=" + $SocksUser),
+        ("set TRINITY_SOCKS_PASSWORD=" + $SocksPass),
         ("set CONTROLLER_URL=" + $ControllerUrl),
         ("set TRINITY_AGENT_KEY=" + $AgentKey),
         'cd /d "%~dp0"',
         ('"' + $exePath + '"')
     )
 
-    if ($env:TRINITY_SOCKS_USER) {
-        $lines = $lines[0..($lines.Length - 2)] + ("set TRINITY_SOCKS_USER=" + $env:TRINITY_SOCKS_USER) + $lines[-1]
-    }
-    if ($env:TRINITY_SOCKS_PASSWORD) {
-        $lines = $lines[0..($lines.Length - 2)] + ("set TRINITY_SOCKS_PASSWORD=" + $env:TRINITY_SOCKS_PASSWORD) + $lines[-1]
-    }
     if ($env:TRINITY_DEVICE_CLASS) {
         $lines = $lines[0..($lines.Length - 2)] + ("set TRINITY_DEVICE_CLASS=" + $env:TRINITY_DEVICE_CLASS) + $lines[-1]
     }
@@ -527,7 +615,7 @@ function Invoke-AgentInstallCore {
     }
 
     $nonInteractive = Test-NonInteractive
-    $script:socksPort = Resolve-SocksPort
+    $script:socksPort = Resolve-SocksPort -TargetDir $InstallDir
 
     if (-not $ControllerUrl) {
         if ($nonInteractive) {
@@ -565,8 +653,12 @@ function Invoke-AgentInstallCore {
 
     Ensure-FirewallRule -Port $socksPort
 
+    Write-Step "Generating SOCKS credentials and configuration..."
+    $creds = Ensure-SocksCredentials -TargetDir $InstallDir -Port $socksPort
+    Write-Ok "SOCKS port $socksPort (unique per agent; firewall opened)"
+
     Write-Step "Writing agent configuration..."
-    $wrapperPath = Write-WrapperScript -TargetDir $InstallDir -Port $socksPort
+    $wrapperPath = Write-WrapperScript -TargetDir $InstallDir -Port $socksPort -SocksUser $creds.User -SocksPass $creds.Pass
     Write-Ok "Launcher script ready (TRINITY_SKIP_INSTALLER=1, TRINITY_SOCKS_PORT=$socksPort)"
 
     Start-AgentBackground -WrapperPath $wrapperPath
@@ -580,9 +672,12 @@ function Invoke-AgentInstallCore {
     Write-Host "  $ControllerUrl"
     Write-Host ""
     Write-Host "Embedded SOCKS5 proxy listens on TCP port $socksPort."
-    Write-Host "SOCKS credentials are auto-generated on first run and saved in:"
-    Write-Host "  $InstallDir\trinityproxy-username"
-    Write-Host "  $InstallDir\trinityproxy-password"
+    Write-Host "SOCKS credentials (also saved in install folder):"
+    Write-Host "  Username: $($creds.User)"
+    Write-Host "  Password: $($creds.Pass)"
+    Write-Host "  Files:    $InstallDir\trinityproxy-username"
+    Write-Host "            $InstallDir\trinityproxy-password"
+    Write-Host "            $InstallDir\trinityproxy-port"
     Write-Host ""
     Write-Host "The agent runs in the background and starts automatically when Windows boots."
     Write-Host "Open your TrinityProxy dashboard Agents page — the node should appear within about a minute."
@@ -602,8 +697,8 @@ function Invoke-AgentInstallCore {
         Write-Host "  Remove agent:    Unregister-ScheduledTask -TaskName $ServiceName -Confirm:`$false"
     }
     Write-Host ""
-    Write-Host "Test SOCKS locally (replace USER/PASS from credential files above):"
-    Write-Host "  curl --proxy socks5://USER:PASS@127.0.0.1:$socksPort https://api.ipify.org"
+    Write-Host "Test SOCKS locally:"
+    Write-Host "  curl --proxy socks5://$($creds.User):$($creds.Pass)@127.0.0.1:$socksPort https://api.ipify.org"
     Write-Host ""
 }
 

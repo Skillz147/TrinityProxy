@@ -214,13 +214,8 @@ func embeddedProxyCredentials() (port int, username, password string) {
 		return srv.Port, srv.Username, srv.Password
 	}
 
-	port = proxy.SocksPort()
-	username = strings.TrimSpace(os.Getenv("TRINITY_SOCKS_USER"))
-	password = strings.TrimSpace(os.Getenv("TRINITY_SOCKS_PASSWORD"))
-	if username != "" && password != "" {
-		return port, username, password
-	}
-	return port, "dev", "dev"
+	cfg := proxy.ConfigFromEnv()
+	return cfg.Port, cfg.Username, cfg.Password
 }
 
 // GatherMetadata builds the full metadata package

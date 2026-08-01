@@ -329,6 +329,24 @@ func TestGeoFailureProducesUnknownLocationFields(t *testing.T) {
 	}
 }
 
+func TestEmbeddedProxyCredentialsNeverDevInProduction(t *testing.T) {
+	t.Setenv("TRINITY_DATA_DIR", t.TempDir())
+	t.Setenv("TRINITY_SKIP_INSTALLER", "1")
+	t.Setenv("TRINITY_NONINTERACTIVE", "1")
+	t.Setenv("TRINITY_DEV", "")
+	t.Setenv("TRINITY_SOCKS_PORT", "10877")
+	t.Setenv("TRINITY_SOCKS_USER", "produser")
+	t.Setenv("TRINITY_SOCKS_PASSWORD", "prodpass")
+
+	_, user, pass := embeddedProxyCredentials()
+	if user == "dev" || pass == "dev" {
+		t.Fatalf("production credentials must not be dev/dev, got %q/%q", user, pass)
+	}
+	if user != "produser" || pass != "prodpass" {
+		t.Fatalf("credentials = %q/%q, want produser/prodpass", user, pass)
+	}
+}
+
 func TestEmbeddedProxyCredentialsFromActiveServer(t *testing.T) {
 	t.Setenv("TRINITY_DATA_DIR", t.TempDir())
 	t.Setenv("TRINITY_SKIP_INSTALLER", "1")

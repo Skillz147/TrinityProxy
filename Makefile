@@ -314,10 +314,13 @@ run-agent-dev: build-main
 	$(load-controller-env) \
 	CONTROLLER_URL="$${CONTROLLER_URL:-http://127.0.0.1:3100}" \
 	TRINITY_ROLE=agent \
+	TRINITY_DEV=1 \
 	TRINITY_NONINTERACTIVE=1 \
 	TRINITY_SKIP_INSTALLER=1 \
 	TRINITY_DEVICE_CLASS=desktop \
 	TRINITY_SOCKS_PORT="$${TRINITY_SOCKS_PORT:-1080}" \
+	TRINITY_SOCKS_USER=dev \
+	TRINITY_SOCKS_PASSWORD=dev \
 	./$(BUILD_DIR)/$(BINARY_NAME)
 
 DOCKER_COMPOSE_DEV = docker compose -f docker/docker-compose.dev.yml

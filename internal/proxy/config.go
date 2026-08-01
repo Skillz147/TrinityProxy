@@ -69,6 +69,11 @@ func DataDir() string {
 	return filepath.Dir(exe)
 }
 
+// DevProxyMode reports whether fixed dev/dev credentials are allowed (local dev only).
+func DevProxyMode() bool {
+	return os.Getenv("TRINITY_DEV") == "1"
+}
+
 // ConfigFromEnv builds config from environment variables, generating credentials when unset.
 func ConfigFromEnv() Config {
 	port := SocksPort()
@@ -78,10 +83,6 @@ func ConfigFromEnv() Config {
 		strings.TrimSpace(os.Getenv(envSocksPass)),
 		strings.TrimSpace(os.Getenv(envSocksPassAlt)),
 	)
-
-	if username == "" && password == "" && os.Getenv("TRINITY_SKIP_INSTALLER") == "1" {
-		return Config{Port: port, Username: defaultUsername, Password: defaultPassword}
-	}
 
 	if username == "" || password == "" {
 		if persisted, err := loadPersistedCredentials(); err == nil {
@@ -97,22 +98,18 @@ func ConfigFromEnv() Config {
 		}
 	}
 
-	if (username == "" || password == "") && os.Getenv("TRINITY_SKIP_INSTALLER") == "1" {
-		if username == "" {
-			username = defaultUsername
-		}
-		if password == "" {
-			password = defaultPassword
-		}
-		return Config{Port: port, Username: username, Password: password}
+	if username == "" && password == "" && DevProxyMode() {
+		return Config{Port: port, Username: defaultUsername, Password: defaultPassword}
 	}
 
 	if username == "" || password == "" {
 		var err error
 		username, password, err = generateCredentials()
 		if err != nil {
-			username = defaultUsername
-			password = defaultPassword
+			if DevProxyMode() {
+				username = defaultUsername
+				password = defaultPassword
+			}
 		} else if port > 0 {
 			_ = persistCredentials(port, username, password)
 		}

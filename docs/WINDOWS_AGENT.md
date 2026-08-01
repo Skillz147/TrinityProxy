@@ -3,8 +3,8 @@
 Install the TrinityProxy agent on a Windows PC so it reports to your controller **and** runs a local embedded SOCKS5 proxy (Go-based — no Dante).
 
 The agent:
-1. Starts an embedded SOCKS5 listener on `TRINITY_SOCKS_PORT` (default **1080**)
-2. Sends heartbeats every 60 seconds with the node's public IP, SOCKS port, and credentials
+1. Starts an embedded SOCKS5 listener on an **auto-selected free port** in `10800–10999` (override with `TRINITY_SOCKS_PORT`)
+2. Sends heartbeats every 60 seconds with the node's public IP, SOCKS port, and **install-time generated credentials**
 
 ## Pre-built binary (recommended)
 
@@ -38,15 +38,18 @@ Run in the foreground for quick testing (no service install):
 
 ```powershell
 $env:TRINITY_ROLE = "agent"
+$env:TRINITY_DEV = "1"
 $env:TRINITY_NONINTERACTIVE = "1"
 $env:TRINITY_SKIP_INSTALLER = "1"
 $env:TRINITY_SOCKS_PORT = "1080"
+$env:TRINITY_SOCKS_USER = "dev"
+$env:TRINITY_SOCKS_PASSWORD = "dev"
 $env:CONTROLLER_URL = "https://api.yourdomain.com"
 $env:TRINITY_AGENT_KEY = "paste-key-from-dashboard"
 .\build\trinityproxy.exe
 ```
 
-On first run, SOCKS credentials are generated and saved next to the binary (`trinityproxy-username`, `trinityproxy-password` in the install folder).
+For local dev testing only, `TRINITY_DEV=1` with `dev`/`dev` credentials is fine. Production installs generate random credentials automatically.
 
 ---
 
@@ -62,17 +65,17 @@ On first run, SOCKS credentials are generated and saved next to the binary (`tri
 cd C:\path\to\TrinityProxy
 $env:CONTROLLER_URL = "https://api.yourdomain.com"
 $env:TRINITY_AGENT_KEY = "paste-key-from-dashboard"
-$env:TRINITY_SOCKS_PORT = "1080"
 $env:TRINITY_NONINTERACTIVE = "1"
 .\scripts\install-agent-windows.ps1
 ```
+
+The installer auto-picks a free SOCKS port (10800–10999), generates random credentials, opens Windows Firewall for that port only, and writes config to `C:\Program Files\TrinityProxy`.
 
 **With a standalone `.exe`** (no repo folder):
 
 ```powershell
 $env:CONTROLLER_URL = "https://api.yourdomain.com"
 $env:TRINITY_AGENT_KEY = "paste-key-from-dashboard"
-$env:TRINITY_SOCKS_PORT = "1080"
 $env:TRINITY_NONINTERACTIVE = "1"
 $env:TRINITY_LOCAL_BINARY = "C:\Downloads\trinityproxy.exe"
 .\install-agent-windows.ps1
@@ -112,9 +115,10 @@ Get-Content "C:\Program Files\TrinityProxy\trinityproxy-password"
 | `TRINITY_ROLE` | Yes | Must be `agent` (set automatically by installer) |
 | `TRINITY_NONINTERACTIVE` | Yes | Set to `1` for service/unattended mode |
 | `TRINITY_SKIP_INSTALLER` | Yes | Set to `1` — use embedded Go SOCKS instead of Dante |
-| `TRINITY_SOCKS_PORT` | No | SOCKS listen port (default `1080`) |
-| `TRINITY_SOCKS_USER` | No | Override auto-generated SOCKS username |
-| `TRINITY_SOCKS_PASSWORD` | No | Override auto-generated SOCKS password |
+| `TRINITY_SOCKS_PORT` | No | Explicit SOCKS port; default is auto-picked free port in `10800–10999` |
+| `TRINITY_SOCKS_USER` | No | Override auto-generated SOCKS username (16-char hex by default) |
+| `TRINITY_SOCKS_PASSWORD` | No | Override auto-generated SOCKS password (32-char hex by default) |
+| `TRINITY_DEV` | No | Set to `1` for local dev only (`dev`/`dev` credentials on `:1080`) |
 | `TRINITY_DEVICE_CLASS` | No | Label in dashboard (default `desktop` on Windows) |
 
 ---

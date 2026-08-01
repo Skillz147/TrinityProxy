@@ -203,6 +203,43 @@ func TestConfigFromEnvDefaults(t *testing.T) {
 	}
 }
 
+func TestConfigFromEnvProductionEmbedded(t *testing.T) {
+	t.Setenv("TRINITY_DATA_DIR", t.TempDir())
+	t.Setenv("TRINITY_SKIP_INSTALLER", "1")
+	t.Setenv("TRINITY_NONINTERACTIVE", "1")
+	t.Setenv("TRINITY_DEV", "")
+	t.Setenv(envSocksPort, "10855")
+	t.Setenv(envSocksUser, "")
+	t.Setenv(envSocksPass, "")
+	t.Setenv(envSocksPassAlt, "")
+
+	cfg := ConfigFromEnv()
+	if cfg.Port != 10855 {
+		t.Fatalf("port = %d, want 10855", cfg.Port)
+	}
+	if cfg.Username == defaultUsername || cfg.Password == defaultPassword {
+		t.Fatalf("production embedded mode must not use dev/dev, got %q/%q", cfg.Username, cfg.Password)
+	}
+	if cfg.Username == "" || cfg.Password == "" {
+		t.Fatal("expected generated credentials")
+	}
+}
+
+func TestConfigFromEnvDevMode(t *testing.T) {
+	t.Setenv("TRINITY_DATA_DIR", t.TempDir())
+	t.Setenv("TRINITY_DEV", "1")
+	t.Setenv("TRINITY_SKIP_INSTALLER", "1")
+	t.Setenv(envSocksPort, "1080")
+	t.Setenv(envSocksUser, "")
+	t.Setenv(envSocksPass, "")
+	t.Setenv(envSocksPassAlt, "")
+
+	cfg := ConfigFromEnv()
+	if cfg.Username != defaultUsername || cfg.Password != defaultPassword {
+		t.Fatalf("dev mode credentials = %q/%q, want dev/dev", cfg.Username, cfg.Password)
+	}
+}
+
 func TestConfigFromEnvExplicit(t *testing.T) {
 	t.Setenv(envSocksPort, "9050")
 	t.Setenv(envSocksUser, "alice")
