@@ -2,6 +2,19 @@
 
 Compact reference for TrinityProxy. Defaults shown where applicable.
 
+## Production secrets (`/etc/trinityproxy/`)
+
+`sudo make start` (or `make install-production`) auto-generates secrets on the VPS:
+
+| File | Contents |
+|------|----------|
+| `/etc/trinityproxy/controller.env` | `TRINITY_API_KEY`, `TRINITY_AGENT_KEY`, `CONTROLLER_URL` (mode 640) |
+| `/etc/trinityproxy/dashboard-admin.txt` | Dashboard login username/password (mode 600, printed once at install) |
+
+Both controller and dashboard systemd units load `controller.env`. Re-running `make start` is safe — existing keys are preserved unless the dashboard DB generates a new agent key.
+
+State databases: `/var/lib/trinityproxy/trinityproxy.db` (nodes), `/var/lib/trinityproxy/dashboard.db` (auth/settings).
+
 ## Controller API (`trinityproxy-api`, port `3100`)
 
 | Variable | Default | Description |
@@ -17,9 +30,7 @@ Compact reference for TrinityProxy. Defaults shown where applicable.
 | `TRINITY_NONINTERACTIVE` | — | `1` = production probe mode |
 | `LOG_FORMAT` | `json` | Set `text` for readable logs |
 
-Generate keys: `openssl rand -hex 32`
-
-Production systemd loads `/etc/trinityproxy/controller.env` (written by `make install-production` or `make sync-agent-key`).
+Manual key generation: `openssl rand -hex 32`
 
 ## Dashboard (`trinityproxy-dashboard`, port `8081`)
 
@@ -47,10 +58,10 @@ Production systemd loads `/etc/trinityproxy/controller.env` (written by `make in
 | `TRINITY_SOCKS_PORT` | `1080` | Embedded SOCKS listen port |
 | `TRINITY_DEVICE_CLASS` | auto | Dashboard label (`desktop`, `vps`, …) |
 
-## Bridge dashboard → controller
+## Bridge dashboard → controller (dev)
 
 ```bash
 make sync-agent-key    # writes .env.controller from dashboard.db
 ```
 
-Dev: `make start` does this automatically when a key exists.
+`make start-dev` does this automatically when a key exists.

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Stop TrinityProxy dev servers started by make start.
+# Stop TrinityProxy dev servers started by make start-dev.
 # Usage: make stop   (or: ./scripts/stop-dashboard-dev.sh)
 
 set -euo pipefail

@@ -1,7 +1,7 @@
 # TrinityProxy Makefile
 # Easy build and deployment for SOCKS5 proxy network
 
-.PHONY: help build build-main build-dashboard build-windows-agent build-darwin-agent build-linux-amd64 build-linux-arm64 install-agent-macos clean install deps test run-controller start-controller run-agent run-agent-dev docker-agent test-agent-docker docker-agent-down setup-dev check-deps format lint setup-system vps-setup setup-api-controller quickstart debug cleanup install-service install-dashboard-service install-production start-service stop-service start stop dashboard dashboard-dev dashboard-init dashboard-run dashboard-up run-dashboard sync-agent-key
+.PHONY: help build build-main build-dashboard build-dashboard-ui build-windows-agent build-darwin-agent build-linux-amd64 build-linux-arm64 install-agent-macos clean install deps test run-controller start-controller run-agent run-agent-dev docker-agent test-agent-docker docker-agent-down setup-dev check-deps format lint setup-system vps-setup setup-api-controller quickstart debug cleanup install-service install-dashboard-service install-production start-service stop-service start start-dev stop stop-production dashboard dashboard-dev dashboard-init dashboard-run dashboard-up run-dashboard sync-agent-key
 
 # Catch accidental "make run dashboard" (space) — the target is run-dashboard (hyphen).
 ifneq (,$(filter dashboard,$(MAKECMDGOALS)))
@@ -13,66 +13,16 @@ endif
 # Default target
 all: deps build
 
-# Help target - shows available commands
+# Help target - shows primary user commands
 help:
-	@echo "TrinityProxy Build System"
-	@echo "========================="
+	@echo "TrinityProxy"
+	@echo "============"
 	@echo ""
-	@echo "🚀 SIMPLE COMMANDS (for users):"
-	@echo "  make start             - Start everything for local dev (dashboard + controller)"
-	@echo "  make stop              - Stop all dev servers"
-	@echo "  make install-production - VPS: install controller + dashboard systemd (auto-restart on boot)"
-	@echo "  make run-agent         - Complete agent setup (Linux: systemd + Dante)"
-	@echo "  make run-agent-dev     - macOS/local dev agent (embedded SOCKS :1080, foreground)"
-	@echo "  make docker-agent      - Linux agent in Docker (simulates VPS; needs Docker Desktop)"
-	@echo "  make run               - Interactive role selection"
-	@echo ""
-	@echo "📋 Available targets:"
-	@echo ""
-	@echo "Quick Setup:"
-	@echo "  make quickstart        - Standard setup (after system dependencies)"
-	@echo "  make vps-setup         - VPS deps + controller systemd (no TLS — use Caddy scripts or dashboard SSL)"
-	@echo "  make agent-setup       - Complete VPS setup for AGENT"
-	@echo "  make setup-system      - Install system dependencies (Go, Dante, etc.)"
-	@echo ""
-	@echo "Build & Dependencies:"
-	@echo "  make all               - Install dependencies and build everything"
-	@echo "  make build             - Build all binaries"
-	@echo "  make build-darwin-agent  - Cross-build agent for macOS (amd64 + arm64)"
-	@echo "  make build-linux-amd64   - Cross-build agent for linux/amd64"
-	@echo "  make build-linux-arm64   - Cross-build agent for linux/arm64"
-	@echo "  make build-windows-agent - Cross-compile agent for Windows (amd64)"
-	@echo "  make deps              - Install Go dependencies"
-	@echo "  make install           - Install system dependencies (requires sudo)"
-	@echo "  make clean             - Clean build artifacts"
-	@echo ""
-	@echo "Development:"
-	@echo "  make start             - Start full dev stack (dashboard :8080/:8081 + controller :3100)"
-	@echo "  make stop              - Stop all dev servers"
-	@echo "  make setup-dev         - Complete development setup"
-	@echo "  make dashboard-dev     - Quick reminder: make start"
-	@echo "  make run-dashboard     - Start dashboard API only on :8081 (advanced)"
-	@echo "  make dashboard-up      - Check :8080 (Vite UI) and :8081 (API) are running"
-	@echo "  make dashboard-init    - Create initial dashboard admin credentials"
-	@echo "  make sync-agent-key    - Write .env.controller from dashboard.db agent key"
-	@echo "  make test              - Run tests"
-	@echo "  make format            - Format Go code"
-	@echo "  make lint              - Run linter"
-	@echo "  make check-deps        - Check system dependencies"
-	@echo ""
-	@echo "VPS Deployment:"
-	@echo "  make install-production   - Install controller + dashboard systemd (auto-restart on boot)"
-	@echo "  make install-service      - Install controller systemd only"
-	@echo "  make install-dashboard-service - Install dashboard systemd only"
-	@echo "  make install-agent-service - Install agent as systemd service"
-	@echo "  make install-agent-macos   - Install agent as macOS launchd service"
-	@echo "  make start-service        - Start systemd controller service"
-	@echo "  make stop-service         - Stop systemd controller service"
-	@echo "  make start-agent-service  - Start systemd agent service"
-	@echo "  make stop-agent-service   - Stop systemd agent service"
-	@echo "  make deploy-vps        - Deploy to VPS (set VPS_HOST variable)"
-	@echo "  make install-dante     - Install Dante SOCKS5 server only"
-	@echo "  make cleanup           - Remove old TrinityProxy installation"
+	@echo "  make start          - PRODUCTION: install + run on VPS (deps, build, secrets, systemd)"
+	@echo "  make start-dev      - LOCAL DEV: Vite :8080, dashboard API :8081, controller :3100"
+	@echo "  make stop           - Stop local dev servers"
+	@echo "  make run-agent-dev  - macOS/local dev agent (embedded SOCKS :1080, foreground)"
+	@echo "  make build          - Build all binaries"
 
 # Variables
 BINARY_NAME=trinityproxy
@@ -95,9 +45,6 @@ build: build-main build-dashboard $(INSTALLER_BINARY) $(API_BINARY)
 
 # Build main agent/controller binary only
 build-main: $(BUILD_DIR)/$(BINARY_NAME)
-
-# Build dashboard API binary only
-build-dashboard: $(DASHBOARD_BINARY)
 
 # Build main binary
 $(BUILD_DIR)/$(BINARY_NAME): $(GO_FILES) | $(BUILD_DIR)/.dir
@@ -127,10 +74,18 @@ $(API_BINARY): cmd/api/enhanced_main.go | $(BUILD_DIR)/.dir
 	@echo "[*] Building API server..."
 	@export PATH="/usr/local/go/bin:$$PATH"; go build $(LDFLAGS) -o $(API_BINARY) ./cmd/api
 
+# Build dashboard UI (npm) and sync into cmd/dashboard/dist for go:embed
+build-dashboard-ui:
+	@chmod +x scripts/build-dashboard-ui.sh
+	@./scripts/build-dashboard-ui.sh
+
 # Build dashboard server binary (all dashboard packages — not only main.go)
 DASHBOARD_GO_SRCS := $(shell find cmd/dashboard internal/dashboard -name '*.go' 2>/dev/null)
+DASHBOARD_UI_SRCS := $(shell find cmd/dashboard/dist -type f 2>/dev/null)
 
-$(DASHBOARD_BINARY): $(DASHBOARD_GO_SRCS) | $(BUILD_DIR)/.dir
+build-dashboard: build-dashboard-ui $(DASHBOARD_BINARY)
+
+$(DASHBOARD_BINARY): $(DASHBOARD_GO_SRCS) $(DASHBOARD_UI_SRCS) | $(BUILD_DIR)/.dir
 	@echo "[*] Building dashboard server..."
 	@export PATH="/usr/local/go/bin:$$PATH"; go build $(LDFLAGS) -o $(DASHBOARD_BINARY) ./cmd/dashboard
 
@@ -371,7 +326,7 @@ docker-agent test-agent-docker:
 		exit 1; \
 	fi
 	@if [ ! -f .env.controller ]; then \
-		echo "[!] No .env.controller — run 'make start' (syncs key automatically) or 'make sync-agent-key'"; \
+		echo "[!] No .env.controller — run 'make start-dev' (syncs key automatically) or 'make sync-agent-key'"; \
 		exit 1; \
 	fi
 	@echo "[*] Building and starting Linux agent container..."
@@ -416,14 +371,23 @@ dev-agent: build-main
 		make $$AGENT_TARGET; \
 	fi
 
-# One command — starts dashboard API (:8081) + Vite UI (:8080)
-start dashboard:
+# Production — full VPS bootstrap (deps, build, secrets, systemd, credentials)
+start:
+	@chmod +x scripts/start-production.sh
+	@./scripts/start-production.sh
+
+# Local dev — dashboard API (:8081) + Vite UI (:8080) + controller (:3100)
+start-dev dashboard:
 	@chmod +x scripts/start-dashboard-dev.sh
 	@./scripts/start-dashboard-dev.sh
 
 stop:
 	@chmod +x scripts/stop-dashboard-dev.sh
 	@./scripts/stop-dashboard-dev.sh
+
+stop-production:
+	@chmod +x scripts/stop-production.sh
+	@./scripts/stop-production.sh
 
 # Dashboard API on :8081 (Vite UI dev server uses :8080)
 run-dashboard dashboard-run: build-dashboard
@@ -453,7 +417,7 @@ dashboard-init: build-dashboard
 
 # Quick reminder for dashboard dev
 dashboard-dev:
-	@echo "Start the dashboard:  make start"
+	@echo "Start the dashboard:  make start-dev"
 	@echo "Open in browser:      http://localhost:8080"
 	@echo "Stop when done:       make stop"
 
@@ -484,10 +448,10 @@ dashboard-up:
 	if [ $$VITE_UP -eq 1 ] && [ $$API_UP -eq 1 ] && [ $$CTRL_UP -eq 1 ]; then \
 		echo "Ready — open http://localhost:8080"; \
 	elif [ $$VITE_UP -eq 1 ] && [ $$API_UP -eq 1 ]; then \
-		echo "Dashboard ready; controller missing — run 'make start'"; \
+		echo "Dashboard ready; controller missing — run 'make start-dev'"; \
 		exit 1; \
 	else \
-		echo "Not ready — run 'make start'"; \
+		echo "Not ready — run 'make start-dev'"; \
 		exit 1; \
 	fi
 
@@ -502,27 +466,14 @@ deploy-vps:
 	ssh $(VPS_HOST) "cd ~/TrinityProxy && make setup-dev && sudo make install"
 	@echo "[+] Deployment complete!"
 
-# Quick start for new clones
+# Internal build helper (used by vps-setup / agent-setup). Prefer make start or make start-dev.
 quickstart:
-	@echo "TrinityProxy Quick Start"
-	@echo "======================="
-	@echo "[1/5] Setting up system dependencies..."
+	@echo "[!] quickstart is deprecated — use 'make start' (VPS) or 'make start-dev' (local)."
+	@echo "[*] Running legacy quickstart steps..."
 	@make setup-system
-	@echo "[2/5] Checking dependencies..."
 	@make check-deps
-	@echo "[3/5] Installing Go dependencies..."
 	@make deps
-	@echo "[4/5] Building binaries..."
 	@make build
-	@echo "[5/5] Ready to run!"
-	@echo ""
-	@echo "🚀 SIMPLE USAGE:"
-	@echo "  make start            - Full local dev (dashboard + controller)"
-	@echo "  make run-agent        - Complete agent setup (Linux VPS: systemd + Dante)"
-	@echo "  make run-agent-dev    - macOS/local dev agent (embedded SOCKS :1080)"
-	@echo "  make install-production - VPS: systemd services for controller + dashboard"
-	@echo "  make run              - Interactive selection"
-	@echo ""
 
 # Complete VPS setup (runs setup script)
 setup-system:
@@ -537,7 +488,7 @@ setup-system:
 	fi
 
 # VPS-specific quickstart (deps + controller systemd — TLS via Caddy scripts or dashboard Cloudflare modal)
-vps-setup: setup-system quickstart install-service
+vps-setup: setup-system deps build install-service
 	@echo ""
 	@echo "[+] VPS Setup Complete!"
 	@echo "======================"
@@ -572,7 +523,7 @@ vps-setup: setup-system quickstart install-service
 	@echo ""
 
 # Agent VPS setup (system setup + agent service)
-agent-setup: setup-system quickstart install-agent-service
+agent-setup: setup-system deps build install-agent-service
 	@echo ""
 	@echo "[+] Agent VPS Setup Complete!"
 	@echo "============================="
@@ -631,15 +582,10 @@ install-dashboard-service: build-dashboard
 		exit 1; \
 	fi
 
-# Install both controller + dashboard for VPS production
-install-production: build
-	@if [ -f "scripts/install-production.sh" ]; then \
-		chmod +x scripts/install-production.sh; \
-		sudo bash scripts/install-production.sh; \
-	else \
-		echo "[!] install-production.sh not found."; \
-		exit 1; \
-	fi
+# Backward-compat alias — use make start for production bootstrap
+install-production:
+	@echo "[!] install-production is deprecated — use 'make start' instead."
+	@$(MAKE) start
 
 # Install agent as systemd service (runs in background)
 install-agent-service: build-main

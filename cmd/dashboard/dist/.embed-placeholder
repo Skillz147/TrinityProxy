@@ -1,0 +1,1 @@
+Placeholder so go:embed succeeds before npm run build. Replaced when scripts/build-dashboard-ui.sh syncs web/dashboard/dist.

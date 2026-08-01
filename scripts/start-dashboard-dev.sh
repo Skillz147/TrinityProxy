@@ -4,7 +4,7 @@
 #   - Dashboard API (:8081) + Vite UI (:8080)
 #   - Controller API (:3100) with .env.controller
 #
-# Usage: make start   (or: ./scripts/start-dashboard-dev.sh)
+# Usage: make start-dev   (or: ./scripts/start-dashboard-dev.sh)
 
 set -euo pipefail
 

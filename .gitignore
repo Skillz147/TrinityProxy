@@ -49,4 +49,4 @@ temp/
 
 # Dashboard frontend
 web/dashboard/node_modules
-web/dashboard/dist
+# web/dashboard/dist is committed for VPS installs without Node.js

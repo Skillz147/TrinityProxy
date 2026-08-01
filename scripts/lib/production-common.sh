@@ -1,0 +1,202 @@
+#!/usr/bin/env bash
+# Shared helpers for TrinityProxy production bootstrap (sourced, not executed).
+
+TRINITY_DIR="${TRINITY_DIR:-/etc/trinityproxy}"
+CONTROLLER_ENV="${CONTROLLER_ENV:-$TRINITY_DIR/controller.env}"
+ADMIN_CREDS="${ADMIN_CREDS:-$TRINITY_DIR/dashboard-admin.txt}"
+STATE_DIR="${STATE_DIR:-/var/lib/trinityproxy}"
+DASHBOARD_USER="${DASHBOARD_USER:-trinityproxy}"
+API_PORT="${API_PORT:-3100}"
+DB_PATH="${DB_PATH:-$STATE_DIR/trinityproxy.db}"
+DASHBOARD_PORT="${DASHBOARD_PORT:-8081}"
+
+production_random_hex() {
+	openssl rand -hex 32
+}
+
+production_detect_primary_ip() {
+	local ip=""
+	if command -v hostname >/dev/null 2>&1; then
+		ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+	fi
+	if [[ -z "$ip" ]] && command -v ip >/dev/null 2>&1; then
+		ip="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}')"
+	fi
+	echo "$ip"
+}
+
+production_read_env_value() {
+	local file="$1" key="$2"
+	if [[ ! -f "$file" ]]; then
+		return 1
+	fi
+	local line
+	line="$(grep -E "^${key}=" "$file" | tail -1 || true)"
+	[[ -n "$line" ]] || return 1
+	echo "${line#*=}"
+}
+
+production_ensure_trinityproxy_user() {
+	if ! id "$DASHBOARD_USER" &>/dev/null; then
+		echo "[*] Creating system user: $DASHBOARD_USER"
+		useradd --system --no-create-home --shell /usr/sbin/nologin \
+			--home-dir "$STATE_DIR" "$DASHBOARD_USER"
+	fi
+}
+
+production_ensure_state_dir() {
+	install -d -o "$DASHBOARD_USER" -g "$DASHBOARD_USER" -m 750 "$STATE_DIR"
+}
+
+production_ensure_controller_env() {
+	echo "[*] Preparing controller secrets..."
+	install -d -m 750 "$TRINITY_DIR"
+
+	local api_key agent_key controller_url
+	api_key="$(production_read_env_value "$CONTROLLER_ENV" TRINITY_API_KEY || true)"
+	agent_key="$(production_read_env_value "$CONTROLLER_ENV" TRINITY_AGENT_KEY || true)"
+	controller_url="$(production_read_env_value "$CONTROLLER_ENV" CONTROLLER_URL || true)"
+
+	[[ -n "$api_key" ]] || api_key="$(production_random_hex)"
+	[[ -n "$agent_key" ]] || agent_key="$(production_random_hex)"
+
+	if [[ -z "$controller_url" ]]; then
+		local ip
+		ip="$(production_detect_primary_ip)"
+		if [[ -n "$ip" ]]; then
+			controller_url="http://${ip}:${API_PORT}"
+		else
+			controller_url="http://127.0.0.1:${API_PORT}"
+		fi
+	fi
+
+	cat >"$CONTROLLER_ENV" <<EOF
+TRINITY_API_KEY=${api_key}
+TRINITY_AGENT_KEY=${agent_key}
+API_PORT=${API_PORT}
+DB_PATH=${DB_PATH}
+CONTROLLER_URL=${controller_url}
+EOF
+	chmod 640 "$CONTROLLER_ENV"
+	chown root:"$DASHBOARD_USER" "$CONTROLLER_ENV" 2>/dev/null || chmod 640 "$CONTROLLER_ENV"
+	echo "[+] Wrote $CONTROLLER_ENV"
+}
+
+production_sync_agent_key_to_controller_env() {
+	local db="$STATE_DIR/dashboard.db"
+	if [[ ! -f "$db" ]] || ! command -v sqlite3 >/dev/null 2>&1; then
+		return 0
+	fi
+	local key
+	key="$(sqlite3 "$db" "SELECT agent_key FROM dashboard_deployment WHERE id = 1;" 2>/dev/null || true)"
+	key="${key//$'\r'/}"
+	key="${key//$'\n'/}"
+	if [[ -z "$key" ]]; then
+		return 0
+	fi
+	local current
+	current="$(production_read_env_value "$CONTROLLER_ENV" TRINITY_AGENT_KEY || true)"
+	if [[ "$current" == "$key" ]]; then
+		return 0
+	fi
+	local api_key controller_url api_port db_path
+	api_key="$(production_read_env_value "$CONTROLLER_ENV" TRINITY_API_KEY)"
+	controller_url="$(production_read_env_value "$CONTROLLER_ENV" CONTROLLER_URL)"
+	api_port="$(production_read_env_value "$CONTROLLER_ENV" API_PORT || echo "$API_PORT")"
+	db_path="$(production_read_env_value "$CONTROLLER_ENV" DB_PATH || echo "$DB_PATH")"
+	cat >"$CONTROLLER_ENV" <<EOF
+TRINITY_API_KEY=${api_key}
+TRINITY_AGENT_KEY=${key}
+API_PORT=${api_port}
+DB_PATH=${db_path}
+CONTROLLER_URL=${controller_url}
+EOF
+	chmod 640 "$CONTROLLER_ENV"
+	chown root:"$DASHBOARD_USER" "$CONTROLLER_ENV" 2>/dev/null || true
+	echo "[+] Synced TRINITY_AGENT_KEY from dashboard DB to $CONTROLLER_ENV"
+}
+
+production_init_dashboard_admin() {
+	echo "[*] Initializing dashboard admin + agent key..."
+	production_ensure_trinityproxy_user
+	production_ensure_state_dir
+
+	local ip dashboard_url
+	ip="$(production_detect_primary_ip)"
+	if [[ -n "$ip" ]]; then
+		dashboard_url="http://${ip}:${DASHBOARD_PORT}"
+	else
+		dashboard_url="http://127.0.0.1:${DASHBOARD_PORT}"
+	fi
+
+	set -a
+	# shellcheck disable=SC1090
+	source "$CONTROLLER_ENV"
+	set +a
+
+	export DASHBOARD_DB_PATH="$STATE_DIR/dashboard.db"
+	export DB_PATH="$DB_PATH"
+	export DASHBOARD_URL="$dashboard_url"
+	export DASHBOARD_ADMIN_CREDS_FILE="$ADMIN_CREDS"
+
+	./build/trinityproxy-dashboard --init-only
+
+	if [[ -f "$STATE_DIR/dashboard.db" ]]; then
+		chown "$DASHBOARD_USER:$DASHBOARD_USER" "$STATE_DIR/dashboard.db"
+		chmod 640 "$STATE_DIR/dashboard.db"
+	fi
+	if [[ -f "$ADMIN_CREDS" ]]; then
+		chmod 600 "$ADMIN_CREDS"
+	fi
+}
+
+production_caddy_active() {
+	[[ -f /etc/caddy/trinityproxy.caddy ]] && command -v caddy >/dev/null 2>&1
+}
+
+production_print_summary() {
+	local ip
+	ip="$(production_detect_primary_ip)"
+	echo ""
+	echo "============================================"
+	echo "  TrinityProxy production bootstrap complete"
+	echo "============================================"
+	echo ""
+	echo "Services (auto-start on reboot):"
+	echo "  trinityproxy-controller  → :${API_PORT}"
+	echo "  trinityproxy-dashboard   → :${DASHBOARD_PORT} (API + embedded UI)"
+	echo ""
+	if production_caddy_active; then
+		echo "Dashboard URL: https://<your-domain> (Caddy reverse proxy active)"
+		echo "Controller API:  https://api.<your-domain> (via Caddy)"
+		echo "  (Direct HTTP:  http://${ip:-127.0.0.1}:${DASHBOARD_PORT})"
+	else
+		if [[ -n "$ip" ]]; then
+			echo "Dashboard URL: http://${ip}:${DASHBOARD_PORT}"
+		else
+			echo "Dashboard URL: http://127.0.0.1:${DASHBOARD_PORT}"
+		fi
+		echo "Controller API:  http://${ip:-127.0.0.1}:${API_PORT}"
+		echo ""
+		echo "HTTPS: Settings → Cloudflare SSL in dashboard, or:"
+		echo "  sudo ./scripts/setup-ssl-caddy-cloudflare.sh"
+	fi
+	echo ""
+	echo "Credentials:"
+	echo "  Controller env:  $CONTROLLER_ENV"
+	echo "    TRINITY_API_KEY, TRINITY_AGENT_KEY, API_PORT, DB_PATH, CONTROLLER_URL"
+	if [[ -f "$ADMIN_CREDS" ]]; then
+		echo "  Dashboard login: $ADMIN_CREDS"
+		echo ""
+		echo "--- Dashboard login (save these credentials) ---"
+		cat "$ADMIN_CREDS"
+		echo "--- end dashboard login ---"
+	else
+		echo "  Dashboard login: admin already exists (see $ADMIN_CREDS or reset DB)"
+	fi
+	echo ""
+	echo "Service commands:"
+	echo "  sudo systemctl status trinityproxy-controller trinityproxy-dashboard"
+	echo "  sudo journalctl -u trinityproxy-controller -f"
+	echo "  sudo journalctl -u trinityproxy-dashboard -f"
+}

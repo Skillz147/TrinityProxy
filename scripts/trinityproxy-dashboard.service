@@ -1,5 +1,5 @@
 [Unit]
-Description=TrinityProxy Dashboard (API + built UI)
+Description=TrinityProxy Dashboard (API + embedded UI)
 After=network.target trinityproxy-controller.service
 Wants=network.target
 
@@ -12,7 +12,6 @@ Environment=DASHBOARD_PORT=8081
 Environment=DASHBOARD_BIND_ADDR=0.0.0.0
 Environment=DASHBOARD_DB_PATH=/var/lib/trinityproxy/dashboard.db
 Environment=DB_PATH=/var/lib/trinityproxy/trinityproxy.db
-Environment=DASHBOARD_STATIC_DIR=/root/TrinityProxy/web/dashboard/dist
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 EnvironmentFile=-/etc/trinityproxy/controller.env
 ExecStart=/root/TrinityProxy/build/trinityproxy-dashboard
@@ -25,7 +24,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ReadWritePaths=/var/lib/trinityproxy
-ReadOnlyPaths=/root/TrinityProxy/build /root/TrinityProxy/web/dashboard/dist
+ReadOnlyPaths=/root/TrinityProxy/build
 
 [Install]
 WantedBy=multi-user.target

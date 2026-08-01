@@ -35,19 +35,19 @@ install_package() {
     
     if command -v apt-get >/dev/null 2>&1; then
         yellow "[*] Installing $package with apt-get..."
-        apt-get update -y && apt-get install -y $package
+        apt-get update -y && apt-get install -y "$package" || return 1
     elif command -v yum >/dev/null 2>&1; then
         yellow "[*] Installing $package with yum..."
-        yum install -y $package
+        yum install -y "$package" || return 1
     elif command -v dnf >/dev/null 2>&1; then
         yellow "[*] Installing $package with dnf..."
-        dnf install -y $package
+        dnf install -y "$package" || return 1
     elif command -v pacman >/dev/null 2>&1; then
         yellow "[*] Installing $package with pacman..."
-        pacman -S --noconfirm $package
+        pacman -S --noconfirm "$package" || return 1
     elif command -v apk >/dev/null 2>&1; then
         yellow "[*] Installing $package with apk..."
-        apk add --no-cache $package
+        apk add --no-cache "$package" || return 1
     else
         red "[-] No supported package manager found!"
         red "[-] Please install $package manually"
@@ -113,34 +113,62 @@ else
   fi
 fi
 
-# Check Dante SOCKS5 server
+# Controller-only bootstrap sets TRINITY_SKIP_DANTE=1 (no sockd on controller VPS).
+if [[ "${TRINITY_SKIP_DANTE:-}" == "1" ]]; then
+  yellow "[*] Skipping Dante (TRINITY_SKIP_DANTE=1 — controller-only host)"
+elif command -v sockd >/dev/null 2>&1; then
+  green "[✔] Dante (sockd) is already installed"
+else
+# Check Dante SOCKS5 server (agents only — controller-only VPS can skip)
+install_dante() {
+  local pkg="$1"
+  yellow "[*] Trying Dante package: $pkg"
+  if install_package "$pkg"; then
+    return 0
+  fi
+  return 1
+}
+
 if command -v sockd >/dev/null 2>&1; then
   green "[✔] Dante (sockd) is already installed"
 else
-  yellow "[!] Dante not found. Installing..."
-  
-  # Dante package names vary by distribution
+  yellow "[!] Dante not found. Installing (optional for controller-only VPS)..."
+
+  DANTE_OK=0
   if command -v apt-get >/dev/null 2>&1; then
-    install_package "dante-server"
+    # Debian 13+ may not ship dante-server — try alternatives, then continue without it
+    for pkg in dante-server dante dante-server-standalone; do
+      if install_dante "$pkg"; then DANTE_OK=1; break; fi
+    done
   elif command -v yum >/dev/null 2>&1; then
-    install_package "dante"
+    for pkg in dante dante-server; do
+      if install_dante "$pkg"; then DANTE_OK=1; break; fi
+    done
   elif command -v dnf >/dev/null 2>&1; then
-    install_package "dante"
+    for pkg in dante dante-server; do
+      if install_dante "$pkg"; then DANTE_OK=1; break; fi
+    done
   elif command -v pacman >/dev/null 2>&1; then
-    install_package "dante"
+    if install_dante "dante"; then DANTE_OK=1; fi
   elif command -v apk >/dev/null 2>&1; then
-    install_package "dante-server"
-  else
-    red "[-] Unable to install Dante automatically"
-    red "[-] Please install Dante SOCKS5 server manually"
-    exit 1
+    for pkg in dante-server dante; do
+      if install_dante "$pkg"; then DANTE_OK=1; break; fi
+    done
   fi
-  
-  green "[✔] Dante installed"
+
+  if command -v sockd >/dev/null 2>&1; then
+    green "[✔] Dante installed"
+  elif [[ "$DANTE_OK" -eq 1 ]]; then
+    yellow "[!] Dante package installed but sockd not in PATH — verify manually"
+  else
+    yellow "[!] Dante not installed (no matching package on this OS)."
+    yellow "[*] Controller-only VPS: safe to skip — install Dante on agent nodes only."
+    yellow "[*] Agent VPS: install Dante manually or use an older Debian/Ubuntu release."
+  fi
 fi
 
 # Check and install essential tools
-essential_tools=("curl" "wget" "git")
+essential_tools=("curl" "wget" "git" "make")
 
 # Add build tools based on package manager
 if command -v apt-get >/dev/null 2>&1; then
@@ -164,6 +192,24 @@ for tool in "${essential_tools[@]}"; do
     green "[✔] $tool installed"
   fi
 done
+
+# SQLite CLI (agent key sync, dashboard DB inspection)
+if command -v sqlite3 >/dev/null 2>&1; then
+  green "[✔] sqlite3 is installed"
+else
+  yellow "[!] sqlite3 not found. Installing..."
+  if command -v apt-get >/dev/null 2>&1; then
+    install_package sqlite3
+  elif command -v yum >/dev/null 2>&1 || command -v dnf >/dev/null 2>&1; then
+    install_package sqlite
+  elif command -v pacman >/dev/null 2>&1; then
+    install_package sqlite
+  elif command -v apk >/dev/null 2>&1; then
+    install_package sqlite
+  else
+    yellow "[!] Install sqlite3 manually for production key sync"
+  fi
+fi
 
 echo ""
 green "[+] TrinityProxy base setup complete. All dependencies are ready."

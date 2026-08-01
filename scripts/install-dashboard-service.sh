@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # Install TrinityProxy Dashboard as a systemd service (requires root).
-# Builds the React UI and serves it from the dashboard binary on :8081.
+# Serves API + embedded UI on :8081 (no Node.js required on VPS).
 
 set -euo pipefail
 
@@ -40,37 +40,55 @@ setup_project_permissions() {
 	local project_root
 	project_root="$(pwd)"
 	echo "[*] Setting project permissions for $DASHBOARD_USER"
-	chmod o+rX "$project_root" "$project_root/build" "$project_root/web/dashboard/dist" 2>/dev/null || true
+	chmod o+rX "$project_root" "$project_root/build" 2>/dev/null || true
 	chmod o+r "$project_root/build/trinityproxy-dashboard" 2>/dev/null || true
-	chmod -R o+rX "$project_root/web/dashboard/dist" 2>/dev/null || true
 }
 
-echo "[*] Building TrinityProxy dashboard..."
+maybe_build_dashboard_ui() {
+	if [[ -f build/trinityproxy-dashboard ]] && [[ -f cmd/dashboard/dist/index.html ]]; then
+		echo "[+] Dashboard binary and embedded UI present — skipping UI build"
+		return 0
+	fi
+	if [[ -f web/dashboard/dist/index.html ]]; then
+		echo "[+] web/dashboard/dist present — syncing into go:embed tree"
+		chmod +x scripts/build-dashboard-ui.sh
+		./scripts/build-dashboard-ui.sh
+		return 0
+	fi
+	if command -v npm >/dev/null 2>&1; then
+		echo "[*] Building dashboard UI (npm)..."
+		chmod +x scripts/build-dashboard-ui.sh
+		./scripts/build-dashboard-ui.sh
+		return 0
+	fi
+	if [[ -f cmd/dashboard/dist/index.html ]]; then
+		echo "[+] Using existing cmd/dashboard/dist for go:embed"
+		return 0
+	fi
+	echo "[*] No npm and no pre-built UI dist — binary must already embed UI from dev/CI build"
+}
+
+echo "[*] Building TrinityProxy dashboard binary..."
 export PATH="/usr/local/go/bin:$PATH"
+maybe_build_dashboard_ui
 make build-dashboard
 
-if ! command -v npm >/dev/null 2>&1; then
-	echo "[-] Node.js/npm required to build dashboard UI. Install Node 18+ and re-run."
+if [[ ! -f build/trinityproxy-dashboard ]]; then
+	echo "[-] build/trinityproxy-dashboard missing — run 'make build' from repo root"
 	exit 1
 fi
-
-echo "[*] Building dashboard UI (web/dashboard/dist)..."
-if [[ ! -d web/dashboard/node_modules ]]; then
-	(cd web/dashboard && npm install)
-fi
-(cd web/dashboard && npm run build)
 
 create_dashboard_user
 setup_state_dir
 setup_project_permissions
 
 CURRENT_DIR="$(pwd)"
+
 echo "[*] Installing systemd service..."
 sed \
 	-e "s|WorkingDirectory=/root/TrinityProxy|WorkingDirectory=$CURRENT_DIR|g" \
 	-e "s|ExecStart=/root/TrinityProxy/build/trinityproxy-dashboard|ExecStart=$CURRENT_DIR/build/trinityproxy-dashboard|g" \
-	-e "s|DASHBOARD_STATIC_DIR=/root/TrinityProxy/web/dashboard/dist|DASHBOARD_STATIC_DIR=$CURRENT_DIR/web/dashboard/dist|g" \
-	-e "s|ReadOnlyPaths=/root/TrinityProxy/build /root/TrinityProxy/web/dashboard/dist|ReadOnlyPaths=$CURRENT_DIR/build $CURRENT_DIR/web/dashboard/dist|g" \
+	-e "s|ReadOnlyPaths=/root/TrinityProxy/build|ReadOnlyPaths=$CURRENT_DIR/build|g" \
 	scripts/trinityproxy-dashboard.service > /etc/systemd/system/trinityproxy-dashboard.service
 
 chmod 644 /etc/systemd/system/trinityproxy-dashboard.service
@@ -78,7 +96,11 @@ chmod 644 /etc/systemd/system/trinityproxy-dashboard.service
 echo "[*] Enabling TrinityProxy Dashboard service..."
 systemctl daemon-reload
 systemctl enable trinityproxy-dashboard
-systemctl start trinityproxy-dashboard
+if systemctl is-active trinityproxy-dashboard >/dev/null 2>&1; then
+	systemctl restart trinityproxy-dashboard
+else
+	systemctl start trinityproxy-dashboard
+fi
 
 echo "[+] TrinityProxy Dashboard installed as systemd service!"
 echo ""

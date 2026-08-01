@@ -39,13 +39,26 @@ func main() {
 	if err != nil {
 		logutil.Fatal(log, "failed to bootstrap dashboard admin", "err", err)
 	}
-	if bootstrap.Created {
-		printBootstrapCredentials(cfg.DashboardURL, bootstrap.Username, bootstrap.TempPassword)
-	} else if initOnly {
-		fmt.Println("Dashboard admin already exists; no credentials generated.")
-	}
 
 	if initOnly {
+		deployStore, err := deployment.NewStore(cfg.DBPath)
+		if err != nil {
+			logutil.Fatal(log, "failed to open deployment store for init", "err", err, "db", cfg.DBPath)
+		}
+		agentKey, err := deployStore.EnsureAgentKey(cfg.AgentKey)
+		deployStore.Close()
+		if err != nil {
+			logutil.Fatal(log, "failed to ensure agent key", "err", err)
+		}
+		if agentKey != "" && cfg.AgentKey == "" {
+			fmt.Printf("TRINITY_AGENT_KEY=%s\n", agentKey)
+		}
+
+		if bootstrap.Created {
+			printBootstrapCredentials(cfg.DashboardURL, bootstrap.Username, bootstrap.TempPassword, os.Getenv("DASHBOARD_ADMIN_CREDS_FILE"))
+		} else {
+			fmt.Println("Dashboard admin already exists; no credentials generated.")
+		}
 		return
 	}
 
@@ -68,6 +81,12 @@ func main() {
 
 	if cfg.StaticDir != "" {
 		registerStaticUI(mux, cfg.StaticDir, log)
+	} else if embeddedUIAvailable() {
+		ui, err := embeddedUIFS()
+		if err != nil {
+			logutil.Fatal(log, "failed to load embedded dashboard UI", "err", err)
+		}
+		registerEmbeddedUI(mux, ui, log)
 	} else if !cfg.DevProxy {
 		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path != "/" {
@@ -80,7 +99,7 @@ func main() {
 			fmt.Fprintf(w, "This process serves /api/* and /health only.\n")
 			fmt.Fprintf(w, "Open the UI at %s (Vite dev server on :8080)\n", cfg.DashboardURL)
 			fmt.Fprintf(w, "Terminal 2: cd web/dashboard && npm run dev\n")
-			fmt.Fprintf(w, "Setup help: make start | make dashboard-dev\n")
+			fmt.Fprintf(w, "Setup help: make start-dev | make dashboard-dev\n")
 		})
 	}
 
@@ -108,12 +127,18 @@ func main() {
 			"auth_db", cfg.DBPath,
 			"nodes_db", cfg.NodesDBPath,
 		)
+	} else if embeddedUIAvailable() {
+		log.Info("dashboard listening with embedded UI",
+			"addr", addr,
+			"auth_db", cfg.DBPath,
+			"nodes_db", cfg.NodesDBPath,
+		)
 	} else {
 		log.Info("dashboard API listening (UI is a separate Vite dev server)",
 			"addr", addr,
 			"open_ui", cfg.DashboardURL,
 			"ui_command", "cd web/dashboard && npm run dev",
-			"make_hint", "make start",
+			"make_hint", "make start-dev",
 			"auth_db", cfg.DBPath,
 			"nodes_db", cfg.NodesDBPath,
 		)
@@ -182,19 +207,31 @@ func registerStaticUI(mux *http.ServeMux, staticDir string, log *slog.Logger) {
 	log.Info("serving built dashboard UI", "dir", absDir)
 }
 
-func printBootstrapCredentials(dashboardURL, username, tempPassword string) {
+func printBootstrapCredentials(dashboardURL, username, tempPassword, credsFile string) {
 	sep := strings.Repeat("=", 60)
-	fmt.Println()
-	fmt.Println(sep)
-	fmt.Println("TrinityProxy Master Dashboard — initial credentials")
-	fmt.Println(sep)
-	fmt.Printf("Dashboard URL:  %s\n", dashboardURL)
-	fmt.Printf("Username:       %s\n", username)
-	fmt.Printf("Temp password:  %s\n", tempPassword)
-	fmt.Println()
-	fmt.Println("First login requires a password change before accessing the dashboard.")
-	fmt.Println(sep)
-	fmt.Println()
+	lines := []string{
+		"",
+		sep,
+		"TrinityProxy Master Dashboard — initial credentials",
+		sep,
+		fmt.Sprintf("Dashboard URL:  %s", dashboardURL),
+		fmt.Sprintf("Username:       %s", username),
+		fmt.Sprintf("Temp password:  %s", tempPassword),
+		"",
+		"First login requires a password change before accessing the dashboard.",
+		sep,
+		"",
+	}
+	for _, line := range lines {
+		fmt.Println(line)
+	}
+
+	if credsFile != "" {
+		body := strings.Join(lines, "\n")
+		if err := os.WriteFile(credsFile, []byte(body), 0o600); err != nil {
+			slog.Default().Error("failed to write dashboard admin credentials file", "err", err, "path", credsFile)
+		}
+	}
 
 	slog.Default().Info("dashboard admin bootstrapped",
 		"dashboard_url", dashboardURL,

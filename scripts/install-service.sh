@@ -47,9 +47,14 @@ setup_project_permissions() {
 }
 
 # Build binaries via Makefile (canonical paths: build/trinityproxy-api, etc.)
-echo "[*] Building TrinityProxy..."
-export PATH="/usr/local/go/bin:$PATH"
-make build
+if [[ "${SKIP_BUILD:-}" != "1" ]]; then
+	echo "[*] Building TrinityProxy..."
+	export PATH="/usr/local/go/bin:$PATH"
+	make build
+else
+	echo "[*] Skipping build (SKIP_BUILD=1)"
+	export PATH="/usr/local/go/bin:$PATH"
+fi
 
 create_controller_user
 setup_state_dir
@@ -68,15 +73,21 @@ chmod 644 /etc/systemd/system/trinityproxy-controller.service
 
 # Reload systemd and enable the service
 echo "[*] Enabling TrinityProxy Controller service..."
-if [[ -f .env.controller ]]; then
+if [[ -f .env.controller ]] && [[ ! -f /etc/trinityproxy/controller.env ]]; then
 	install -d -m 750 /etc/trinityproxy
-	grep -E '^export TRINITY_AGENT_KEY=' .env.controller | sed 's/^export //' > /etc/trinityproxy/controller.env
+	grep -E '^export TRINITY_' .env.controller | sed 's/^export //' > /etc/trinityproxy/controller.env
 	chmod 640 /etc/trinityproxy/controller.env
 	echo "[+] Wrote /etc/trinityproxy/controller.env from .env.controller"
+elif [[ -f /etc/trinityproxy/controller.env ]]; then
+	echo "[*] Using existing /etc/trinityproxy/controller.env"
 fi
 systemctl daemon-reload
 systemctl enable trinityproxy-controller
-systemctl start trinityproxy-controller
+if [[ "${SKIP_START:-}" != "1" ]]; then
+	systemctl start trinityproxy-controller
+else
+	echo "[*] Skipping service start (SKIP_START=1)"
+fi
 
 echo "[+] TrinityProxy Controller installed as systemd service!"
 echo ""
