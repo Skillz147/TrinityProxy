@@ -695,10 +695,16 @@ production_init_dashboard_admin() {
 	fi
 }
 
+production_caddy_config_present() {
+	[[ -f /etc/caddy/trinityproxy.caddy ]]
+}
+
 production_caddy_active() {
 	local caddy_bin
 	caddy_bin="$(production_resolve_cmd caddy 2>/dev/null || true)"
-	[[ -f /etc/caddy/trinityproxy.caddy ]] && [[ -n "$caddy_bin" ]]
+	[[ -n "$caddy_bin" ]] || return 1
+	production_caddy_config_present || return 1
+	production_systemctl is-active --quiet caddy 2>/dev/null
 }
 
 production_print_dashboard_login_banner() {
@@ -747,6 +753,20 @@ production_print_summary() {
 		echo "Dashboard URL: https://<your-domain> (Caddy reverse proxy active)"
 		echo "Controller API:  https://api.<your-domain> (via Caddy)"
 		echo "  (Direct HTTP:  ${dash_url})"
+	elif production_caddy_config_present; then
+		echo "Dashboard URL: ${dash_url}"
+		echo "Controller API:  ${api_url}"
+		if [[ -z "$ip_detected" ]]; then
+			echo "  (No IPv4 auto-detected — if the URL is wrong, run: hostname -I)"
+		fi
+		echo ""
+		echo "Caddy config present but service not running — HTTPS is not active."
+		echo "  Fix permissions: sudo chown root:caddy /etc/caddy/trinityproxy.caddy"
+		echo "    sudo chmod 640 /etc/caddy/trinityproxy.caddy"
+		if [[ -f /etc/caddy/cloudflare.env ]]; then
+			echo "    sudo chown root:caddy /etc/caddy/cloudflare.env && sudo chmod 640 /etc/caddy/cloudflare.env"
+		fi
+		echo "  Then: sudo systemctl restart caddy && systemctl is-active caddy"
 	else
 		echo "Dashboard URL: ${dash_url}"
 		echo "Controller API:  ${api_url}"
@@ -754,7 +774,7 @@ production_print_summary() {
 			echo "  (No IPv4 auto-detected — if the URL is wrong, run: hostname -I)"
 		fi
 		echo ""
-		if [[ "\${TRINITY_DOMAIN_SETUP_SKIPPED:-}" == "1" ]]; then
+		if [[ "${TRINITY_DOMAIN_SETUP_SKIPPED:-}" == "1" ]]; then
 			echo "HTTPS: skipped during make start — dashboard works on ${dash_url}"
 			echo "  Re-run anytime: sudo make setup-domain"
 		else

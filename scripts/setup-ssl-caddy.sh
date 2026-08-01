@@ -160,6 +160,67 @@ ensure_caddy_package() {
     fi
 }
 
+
+secure_caddy_readable_file() {
+    local f="$1"
+    if [[ ! -f "$f" ]]; then
+        return 0
+    fi
+    if id caddy >/dev/null 2>&1; then
+        chown root:caddy "$f" 2>/dev/null || chown root:root "$f"
+        chmod 640 "$f"
+    else
+        chmod 644 "$f"
+    fi
+}
+
+redact_caddy_journal() {
+    sed -E \
+        -e 's/(CLOUDFLARE_API_TOKEN=)[^[:space:]"]+/\1[REDACTED]/g' \
+        -e 's/([Tt]oken[=:])[A-Za-z0-9_-]{20,}/\1[REDACTED]/g'
+}
+
+print_caddy_service_diagnostics_redacted() {
+    echo ""
+    echo "[!] caddy.service failed — recent journal entries (secrets redacted):"
+    journalctl -xeu caddy.service -n 30 --no-pager 2>/dev/null \
+        | redact_caddy_journal \
+        || journalctl -u caddy.service -n 30 --no-pager 2>/dev/null | redact_caddy_journal \
+        || true
+    echo ""
+    echo "[*] If a Cloudflare API token appeared in logs elsewhere, rotate it in the Cloudflare dashboard."
+}
+
+run_caddy_validate() {
+    local caddyfile="$1"
+    local env_file="${2:-}"
+    echo "[*] Validating Caddy configuration (same permissions as caddy.service)..."
+    local token=""
+    if [[ -n "$env_file" && -f "$env_file" ]]; then
+        set -a
+        # shellcheck disable=SC1090
+        source "$env_file"
+        set +a
+        token="${CLOUDFLARE_API_TOKEN:-}"
+    fi
+    if id caddy >/dev/null 2>&1; then
+        if [[ -n "$token" ]]; then
+            if ! sudo -u caddy env CLOUDFLARE_API_TOKEN="$token" caddy validate --config "$caddyfile"; then
+                return 1
+            fi
+        elif ! sudo -u caddy caddy validate --config "$caddyfile"; then
+            return 1
+        fi
+    elif [[ -n "$token" ]]; then
+        if ! env CLOUDFLARE_API_TOKEN="$token" caddy validate --config "$caddyfile"; then
+            return 1
+        fi
+    elif ! caddy validate --config "$caddyfile"; then
+        return 1
+    fi
+    return 0
+}
+
 ensure_caddy_runtime_dirs() {
     echo "[*] Ensuring Caddy data and config directories..."
     install -d -m 755 /etc/caddy
@@ -170,10 +231,7 @@ ensure_caddy_runtime_dirs() {
 }
 
 print_caddy_service_diagnostics() {
-    echo ""
-    echo "[!] caddy.service failed — recent journal entries:"
-    journalctl -xeu caddy.service -n 30 --no-pager 2>/dev/null || journalctl -u caddy.service -n 30 --no-pager 2>/dev/null || true
-    echo ""
+    print_caddy_service_diagnostics_redacted
     if command -v ss >/dev/null 2>&1; then
         if ss -tlnH 2>/dev/null | grep -qE ':80 |:443 '; then
             echo "[!] Something is already listening on port 80 and/or 443:"
@@ -209,6 +267,7 @@ write_global_caddyfile() {
 
 import trinityproxy.caddy
 EOF
+    secure_caddy_readable_file "$CADDYFILE"
 }
 
 write_site_config() {
@@ -231,14 +290,14 @@ ${DASHBOARD_DOMAIN} {
 }
 EOF
     fi
+    secure_caddy_readable_file "$CADDY_SITE"
 }
 
 enable_caddy() {
     ensure_caddy_runtime_dirs
 
-    echo "[*] Validating Caddy configuration..."
-    if ! caddy validate --config "$CADDYFILE"; then
-        echo "[!] Caddy configuration validation failed"
+    if ! run_caddy_validate "$CADDYFILE"; then
+        echo "[!] Caddy configuration validation failed (check permissions: root:caddy, mode 640 on /etc/caddy/*.caddy)"
         exit 1
     fi
 
