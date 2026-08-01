@@ -9,6 +9,7 @@ User=trinityproxy
 Group=trinityproxy
 WorkingDirectory=/var/lib/trinityproxy
 Environment=DASHBOARD_PORT=8081
+Environment=TRINITY_SCRIPTS_DIR=/opt/trinityproxy/scripts
 Environment=DASHBOARD_BIND_ADDR=0.0.0.0
 Environment=DASHBOARD_DB_PATH=/var/lib/trinityproxy/dashboard.db
 Environment=DB_PATH=/var/lib/trinityproxy/trinityproxy.db
@@ -25,6 +26,7 @@ PrivateTmp=true
 ProtectSystem=strict
 ReadWritePaths=/var/lib/trinityproxy
 ReadOnlyPaths=/opt/trinityproxy/bin
+ReadOnlyPaths=/opt/trinityproxy/scripts
 
 [Install]
 WantedBy=multi-user.target

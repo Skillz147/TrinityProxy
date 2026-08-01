@@ -90,6 +90,7 @@ if production_is_dev_install; then
 	setup_dev_project_permissions
 else
 	production_install_binaries "$ROOT" trinityproxy-dashboard
+	production_install_scripts "$ROOT"
 fi
 
 echo "[*] Installing systemd service..."

@@ -414,20 +414,20 @@ func (s *Server) handleProvisionSSL(w http.ResponseWriter, r *http.Request) {
 	email := "ssl@" + normalized
 	serverIP := s.serverPublicIP(r)
 
-	scriptPath := "./scripts/setup-ssl-caddy-cloudflare.sh"
-	if _, err := os.Stat(scriptPath); err != nil {
-		s.log.Error("setup script not found", "path", scriptPath, "err", err)
+	scriptPath, err := resolveSSLScript(sslScriptCloudflare)
+	if err != nil {
+		s.log.Error("setup script not found", "err", err)
 		writeJSONError(w, http.StatusInternalServerError, "SSL setup script not found")
 		return
 	}
 
-	cmd := exec.Command("sudo", "env",
+	cmd := exec.Command("sudo", "-E", scriptPath)
+	cmd.Env = append(os.Environ(),
 		"PUBLIC_DOMAIN="+normalized,
 		"EMAIL="+email,
 		"SERVER_IP="+serverIP,
 		"CLOUDFLARE_API_TOKEN="+req.CloudflareAPIToken,
 		"SKIP_DNS_WAIT=1",
-		scriptPath,
 	)
 
 	s.log.Info("running Cloudflare SSL provision script", "domain", normalized, "email", email, "ip", serverIP)

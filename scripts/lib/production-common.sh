@@ -35,6 +35,60 @@ production_install_binaries() {
 	done
 }
 
+OPT_SCRIPTS_DIR="${OPT_SCRIPTS_DIR:-$OPT_PREFIX/scripts}"
+SSL_SETUP_SCRIPT="${SSL_SETUP_SCRIPT:-$OPT_SCRIPTS_DIR/setup-ssl-caddy-cloudflare.sh}"
+
+production_install_scripts() {
+	local project_root="$1"
+	local name src
+	production_install -d -o root -g root -m 755 "$OPT_SCRIPTS_DIR"
+	for name in setup-ssl-caddy-cloudflare.sh setup-ssl-caddy.sh; do
+		src="$project_root/scripts/$name"
+		if [[ ! -f "$src" ]]; then
+			echo "[-] Missing script: $src" >&2
+			return 1
+		fi
+		echo "[*] Installing $name -> $OPT_SCRIPTS_DIR/$name"
+		production_install -o root -g root -m 755 "$src" "$OPT_SCRIPTS_DIR/$name"
+	done
+	production_install_ssl_sudoers
+}
+
+production_install_ssl_sudoers() {
+	local dropin="/etc/sudoers.d/trinityproxy-ssl"
+	if [[ -f "$dropin" ]]; then
+		echo "[*] sudoers drop-in already exists: $dropin"
+		return 0
+	fi
+	local visudo_bin
+	visudo_bin="$(production_resolve_cmd visudo 2>/dev/null || true)"
+	if [[ -z "$visudo_bin" ]]; then
+		echo "[!] visudo not found — skipping sudoers for dashboard SSL provision" >&2
+		echo "    Allow NOPASSWD for: $SSL_SETUP_SCRIPT" >&2
+		return 0
+	fi
+	echo "[*] Installing sudoers drop-in for dashboard SSL provision..."
+	local tmp
+	tmp="$(mktemp)"
+	cat >"$tmp" <<EOF
+# TrinityProxy dashboard SSL provisioning (managed by production_install_scripts)
+Defaults:trinityproxy env_keep += "PUBLIC_DOMAIN"
+Defaults:trinityproxy env_keep += "EMAIL"
+Defaults:trinityproxy env_keep += "SERVER_IP"
+Defaults:trinityproxy env_keep += "CLOUDFLARE_API_TOKEN"
+Defaults:trinityproxy env_keep += "SKIP_DNS_WAIT"
+trinityproxy ALL=(root) NOPASSWD: $SSL_SETUP_SCRIPT
+EOF
+	chmod 440 "$tmp"
+	if ! "$visudo_bin" -cf "$tmp"; then
+		rm -f "$tmp"
+		echo "[-] visudo rejected sudoers fragment" >&2
+		return 1
+	fi
+	production_install -o root -g root -m 440 "$tmp" "$dropin"
+	rm -f "$tmp"
+}
+
 production_install_systemd_unit() {
 	local template="$1"
 	local dest="$2"
@@ -45,6 +99,8 @@ production_install_systemd_unit() {
 			-e "s|WorkingDirectory=/var/lib/trinityproxy|WorkingDirectory=$project_root|g" \
 			-e "s|ExecStart=/opt/trinityproxy/bin/|ExecStart=$project_root/build/|g" \
 			-e "s|ReadOnlyPaths=/opt/trinityproxy/bin|ReadOnlyPaths=$project_root/build|g" \
+			-e "s|ReadOnlyPaths=/opt/trinityproxy/scripts|ReadOnlyPaths=$project_root/scripts|g" \
+			-e "s|TRINITY_SCRIPTS_DIR=/opt/trinityproxy/scripts|TRINITY_SCRIPTS_DIR=$project_root/scripts|g" \
 			"$template" >"$dest"
 	else
 		echo "[*] Production install: $dest (binaries under $OPT_BIN_DIR)"
@@ -694,7 +750,7 @@ production_print_summary() {
 		fi
 		echo ""
 		echo "HTTPS: Settings → Cloudflare SSL in dashboard, or:"
-		echo "  sudo ./scripts/setup-ssl-caddy-cloudflare.sh"
+		echo "  sudo /opt/trinityproxy/scripts/setup-ssl-caddy-cloudflare.sh"
 	fi
 	production_print_dashboard_login_banner
 	echo ""

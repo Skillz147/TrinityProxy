@@ -291,6 +291,7 @@ run_as_root bash -c "
 	production_sync_agent_key_to_controller_env
 	production_fixup_state_dir
 	production_install_binaries "$ROOT" trinityproxy-api trinityproxy-dashboard
+	production_install_scripts "$ROOT"
 	production_systemctl daemon-reload
 	production_systemctl enable trinityproxy-controller trinityproxy-dashboard
 	production_systemctl restart trinityproxy-dashboard
