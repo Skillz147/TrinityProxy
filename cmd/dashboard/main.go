@@ -157,8 +157,6 @@ func main() {
 		"regenerate_agent_key", "POST /api/dashboard/deployment/regenerate-agent-key",
 		"dns_hints", "GET /api/dashboard/deployment/dns-hints",
 		"dev_setup", "GET /api/dashboard/deployment/dev-setup",
-		"cloudflare_setup", "GET /api/dashboard/deployment/cloudflare-setup",
-		"provision_ssl", "POST /api/dashboard/deployment/provision-ssl",
 		"health", "GET /health",
 	)
 

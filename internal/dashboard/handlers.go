@@ -54,8 +54,6 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/dashboard/deployment/regenerate-agent-key", s.middleware.RequirePasswordChanged(s.handleRegenerateAgentKey))
 	mux.HandleFunc("GET /api/dashboard/deployment/dns-hints", s.middleware.RequirePasswordChanged(s.handleDNSHints))
 	mux.HandleFunc("GET /api/dashboard/deployment/dev-setup", s.middleware.RequirePasswordChanged(s.handleDevSetup))
-	mux.HandleFunc("GET /api/dashboard/deployment/cloudflare-setup", s.middleware.RequirePasswordChanged(s.handleCloudflareSetup))
-	mux.HandleFunc("POST /api/dashboard/deployment/provision-ssl", s.middleware.RequirePasswordChanged(s.handleProvisionSSL))
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -371,16 +369,6 @@ func (s *Server) handleDevSetup(w http.ResponseWriter, r *http.Request) {
 	serverIP := s.serverPublicIP(r)
 	setup := deployment.BuildDevSetup(settings.PublicDomain, serverIP)
 	writeJSON(w, http.StatusOK, setup)
-}
-
-const sslSetupDeprecatedMsg = "SSL and domain setup moved to the server. On your VPS run: sudo PUBLIC_DOMAIN=example.com CLOUDFLARE_API_TOKEN=your_token SERVER_IP=203.0.113.10 EMAIL=ssl@example.com SKIP_DNS_WAIT=1 /opt/trinityproxy/scripts/setup-ssl-caddy-cloudflare.sh"
-
-func (s *Server) handleCloudflareSetup(w http.ResponseWriter, r *http.Request) {
-	writeJSONError(w, http.StatusGone, sslSetupDeprecatedMsg)
-}
-
-func (s *Server) handleProvisionSSL(w http.ResponseWriter, r *http.Request) {
-	writeJSONError(w, http.StatusGone, sslSetupDeprecatedMsg)
 }
 
 func (s *Server) serverPublicIP(r *http.Request) string {

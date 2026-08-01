@@ -20,6 +20,7 @@ help:
 	@echo ""
 	@echo "  make start          - PRODUCTION: install + run on VPS (deps, build, secrets, systemd)"
 	@echo "  make uninstall-production - Remove prod install (systemd, /opt, data, config); fresh: sudo make start"
+	@echo "  make uninstall          - Alias for uninstall-production"
 	@echo "  make start-dev      - LOCAL DEV: Vite :8080, dashboard API :8081, controller :3100"
 	@echo "  make stop           - Stop local dev servers"
 	@echo "  make run-agent-dev  - macOS/local dev agent (embedded SOCKS :1080, foreground)"
