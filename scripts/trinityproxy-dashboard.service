@@ -7,14 +7,14 @@ Wants=network.target
 Type=simple
 User=trinityproxy
 Group=trinityproxy
-WorkingDirectory=/root/TrinityProxy
+WorkingDirectory=/var/lib/trinityproxy
 Environment=DASHBOARD_PORT=8081
 Environment=DASHBOARD_BIND_ADDR=0.0.0.0
 Environment=DASHBOARD_DB_PATH=/var/lib/trinityproxy/dashboard.db
 Environment=DB_PATH=/var/lib/trinityproxy/trinityproxy.db
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 EnvironmentFile=-/etc/trinityproxy/controller.env
-ExecStart=/root/TrinityProxy/build/trinityproxy-dashboard
+ExecStart=/opt/trinityproxy/bin/trinityproxy-dashboard
 Restart=always
 RestartSec=5
 StandardOutput=journal
@@ -24,7 +24,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ReadWritePaths=/var/lib/trinityproxy
-ReadOnlyPaths=/root/TrinityProxy/build
+ReadOnlyPaths=/opt/trinityproxy/bin
 
 [Install]
 WantedBy=multi-user.target

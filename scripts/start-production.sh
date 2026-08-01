@@ -254,8 +254,8 @@ install_systemd_units() {
 	echo "[6/10] Installing systemd services..."
 	export SKIP_BUILD=1 SKIP_START=1
 	chmod +x scripts/install-service.sh scripts/install-dashboard-service.sh
-	run_as_root env SKIP_BUILD=1 SKIP_START=1 bash scripts/install-service.sh
-	run_as_root env SKIP_BUILD=1 SKIP_START=1 bash scripts/install-dashboard-service.sh
+	run_as_root env SKIP_BUILD=1 SKIP_START=1 bash -c "cd '$ROOT' && bash scripts/install-service.sh"
+	run_as_root env SKIP_BUILD=1 SKIP_START=1 bash -c "cd '$ROOT' && bash scripts/install-dashboard-service.sh"
 }
 
 
@@ -290,6 +290,7 @@ run_as_root bash -c "
 	source '$ROOT/scripts/lib/production-common.sh'
 	production_init_dashboard_admin
 	production_sync_agent_key_to_controller_env
+	production_install_binaries "$ROOT" trinityproxy-api trinityproxy-dashboard
 	production_systemctl daemon-reload
 	production_systemctl enable trinityproxy-controller trinityproxy-dashboard
 	production_systemctl restart trinityproxy-controller

@@ -11,6 +11,48 @@ API_PORT="${API_PORT:-3100}"
 DB_PATH="${DB_PATH:-$STATE_DIR/trinityproxy.db}"
 DASHBOARD_PORT="${DASHBOARD_PORT:-8081}"
 
+OPT_PREFIX="${OPT_PREFIX:-/opt/trinityproxy}"
+OPT_BIN_DIR="${OPT_BIN_DIR:-$OPT_PREFIX/bin}"
+
+production_is_dev_install() {
+	[[ "${TRINITY_DEV:-}" == "1" ]]
+}
+
+production_install_binaries() {
+	local project_root="$1"
+	shift
+	local name src
+	production_install -d -o root -g "$DASHBOARD_USER" -m 750 "$OPT_BIN_DIR"
+	for name in "$@"; do
+		src="$project_root/build/$name"
+		if [[ ! -f "$src" ]]; then
+			echo "[-] Missing binary: $src" >&2
+			return 1
+		fi
+		echo "[*] Installing $name -> $OPT_BIN_DIR/$name"
+		production_install -o root -g "$DASHBOARD_USER" -m 750 "$src" "$OPT_BIN_DIR/$name"
+	done
+}
+
+production_install_systemd_unit() {
+	local template="$1"
+	local dest="$2"
+	local project_root="$3"
+	if production_is_dev_install; then
+		echo "[*] Dev install (TRINITY_DEV=1): using build/ paths under $project_root"
+		sed \
+			-e "s|WorkingDirectory=/var/lib/trinityproxy|WorkingDirectory=$project_root|g" \
+			-e "s|ExecStart=/opt/trinityproxy/bin/|ExecStart=$project_root/build/|g" \
+			-e "s|ReadOnlyPaths=/opt/trinityproxy/bin|ReadOnlyPaths=$project_root/build|g" \
+			"$template" >"$dest"
+	else
+		echo "[*] Production install: $dest (binaries under $OPT_BIN_DIR)"
+		cp "$template" "$dest"
+	fi
+	chmod 644 "$dest"
+}
+
+
 production_resolve_cmd() {
 	local name="$1"
 	local dir p

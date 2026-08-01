@@ -10,6 +10,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=scripts/lib/production-common.sh
 source "$ROOT/scripts/lib/production-common.sh"
 
+cd "$ROOT"
+
 DASHBOARD_USER="trinityproxy"
 DASHBOARD_GROUP="trinityproxy"
 STATE_DIR="/var/lib/trinityproxy"
@@ -40,10 +42,10 @@ setup_state_dir() {
 	production_install -d -o "$DASHBOARD_USER" -g "$DASHBOARD_GROUP" -m 750 "$STATE_DIR"
 }
 
-setup_project_permissions() {
+setup_dev_project_permissions() {
 	local project_root
 	project_root="$(pwd)"
-	echo "[*] Setting project permissions for $DASHBOARD_USER"
+	echo "[*] Dev: granting $DASHBOARD_USER read/execute on $project_root/build"
 	chmod o+rX "$project_root" "$project_root/build" 2>/dev/null || true
 	chmod o+r "$project_root/build/trinityproxy-dashboard" 2>/dev/null || true
 }
@@ -84,18 +86,15 @@ fi
 
 create_dashboard_user
 setup_state_dir
-setup_project_permissions
-
-CURRENT_DIR="$(pwd)"
+if production_is_dev_install; then
+	setup_dev_project_permissions
+else
+	production_install_binaries "$ROOT" trinityproxy-dashboard
+fi
 
 echo "[*] Installing systemd service..."
-sed \
-	-e "s|WorkingDirectory=/root/TrinityProxy|WorkingDirectory=$CURRENT_DIR|g" \
-	-e "s|ExecStart=/root/TrinityProxy/build/trinityproxy-dashboard|ExecStart=$CURRENT_DIR/build/trinityproxy-dashboard|g" \
-	-e "s|ReadOnlyPaths=/root/TrinityProxy/build|ReadOnlyPaths=$CURRENT_DIR/build|g" \
-	scripts/trinityproxy-dashboard.service > /etc/systemd/system/trinityproxy-dashboard.service
-
-chmod 644 /etc/systemd/system/trinityproxy-dashboard.service
+production_install_systemd_unit "$ROOT/scripts/trinityproxy-dashboard.service" \
+	/etc/systemd/system/trinityproxy-dashboard.service "$ROOT"
 
 echo "[*] Enabling TrinityProxy Dashboard service..."
 production_systemctl daemon-reload

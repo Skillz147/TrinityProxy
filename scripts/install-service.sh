@@ -10,6 +10,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=scripts/lib/production-common.sh
 source "$ROOT/scripts/lib/production-common.sh"
 
+cd "$ROOT"
+
 CONTROLLER_USER="trinityproxy"
 CONTROLLER_GROUP="trinityproxy"
 STATE_DIR="/var/lib/trinityproxy"
@@ -41,13 +43,12 @@ setup_state_dir() {
     production_install -d -o "$CONTROLLER_USER" -g "$CONTROLLER_GROUP" -m 750 "$STATE_DIR"
 }
 
-setup_project_permissions() {
-    local project_root
-    project_root="$(pwd)"
-    echo "[*] Setting project permissions for $CONTROLLER_USER (read/execute only)"
-    # Controller needs read+execute on repo root and build artifacts; no write to source tree.
-    chmod o+rX "$project_root" "$project_root/build" 2>/dev/null || true
-    chmod o+r "$project_root/build/trinityproxy-api" 2>/dev/null || true
+setup_dev_project_permissions() {
+	local project_root
+	project_root="$(pwd)"
+	echo "[*] Dev: granting $CONTROLLER_USER read/execute on $project_root/build"
+	chmod o+rX "$project_root" "$project_root/build" 2>/dev/null || true
+	chmod o+r "$project_root/build/trinityproxy-api" 2>/dev/null || true
 }
 
 # Build binaries via Makefile (canonical paths: build/trinityproxy-api, etc.)
@@ -62,18 +63,15 @@ fi
 
 create_controller_user
 setup_state_dir
-setup_project_permissions
+if production_is_dev_install; then
+	setup_dev_project_permissions
+else
+	production_install_binaries "$ROOT" trinityproxy-api
+fi
 
-# Copy the service file
 echo "[*] Installing systemd service..."
-CURRENT_DIR="$(pwd)"
-sed \
-    -e "s|WorkingDirectory=/root/TrinityProxy|WorkingDirectory=$CURRENT_DIR|g" \
-    -e "s|ExecStart=/root/TrinityProxy/build/trinityproxy-api|ExecStart=$CURRENT_DIR/build/trinityproxy-api|g" \
-    -e "s|ReadOnlyPaths=/root/TrinityProxy/build|ReadOnlyPaths=$CURRENT_DIR/build|g" \
-    scripts/trinityproxy-controller.service > /etc/systemd/system/trinityproxy-controller.service
-
-chmod 644 /etc/systemd/system/trinityproxy-controller.service
+production_install_systemd_unit "$ROOT/scripts/trinityproxy-controller.service" \
+	/etc/systemd/system/trinityproxy-controller.service "$ROOT"
 
 # Reload systemd and enable the service
 echo "[*] Enabling TrinityProxy Controller service..."
@@ -96,6 +94,11 @@ fi
 echo "[+] TrinityProxy Controller installed as systemd service!"
 echo ""
 echo "Runtime user: $CONTROLLER_USER (non-root)"
+if production_is_dev_install; then
+	echo "Binary:         $ROOT/build/trinityproxy-api (TRINITY_DEV=1)"
+else
+	echo "Binary:         $OPT_BIN_DIR/trinityproxy-api"
+fi
 echo "Database path:  $STATE_DIR/trinityproxy.db (via DB_PATH in unit file)"
 echo ""
 echo "One-time install used sudo; day-to-day service runs unprivileged."

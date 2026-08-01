@@ -7,24 +7,23 @@ Wants=network.target
 Type=simple
 User=trinityproxy
 Group=trinityproxy
-WorkingDirectory=/root/TrinityProxy
+WorkingDirectory=/var/lib/trinityproxy
 Environment=TRINITY_ROLE=controller
 Environment=TRINITY_NONINTERACTIVE=1
 Environment=DB_PATH=/var/lib/trinityproxy/trinityproxy.db
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 EnvironmentFile=-/etc/trinityproxy/controller.env
-ExecStart=/root/TrinityProxy/build/trinityproxy-api
+ExecStart=/opt/trinityproxy/bin/trinityproxy-api
 Restart=always
 RestartSec=5
 StandardOutput=journal
 StandardError=journal
 
-# Hardening (WorkingDirectory may live under /root on fresh VPS installs)
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ReadWritePaths=/var/lib/trinityproxy
-ReadOnlyPaths=/root/TrinityProxy/build
+ReadOnlyPaths=/opt/trinityproxy/bin
 
 [Install]
 WantedBy=multi-user.target
