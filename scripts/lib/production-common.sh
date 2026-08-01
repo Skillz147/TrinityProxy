@@ -706,8 +706,105 @@ production_print_summary() {
 		echo "  Using private IP ${ip_detected} in URLs — edit CONTROLLER_URL for internet-facing agents."
 	fi
 	echo ""
+	if ! production_caddy_active; then
+		production_print_cloud_firewall_instructions
+	fi
+	echo ""
 	echo "Service commands:"
 	echo "  sudo systemctl status trinityproxy-controller trinityproxy-dashboard"
 	echo "  sudo journalctl -u trinityproxy-controller -f"
 	echo "  sudo journalctl -u trinityproxy-dashboard -f"
+}
+
+# --- Cloud / host firewall helpers (VPS dashboard reachability) ---
+
+production_print_cloud_firewall_instructions() {
+	local ip
+	ip="$(production_detect_primary_ip 2>/dev/null || true)"
+	echo ""
+	echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+	echo "  [!] OPEN CLOUD FIREWALL (required for browser access)"
+	echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+	echo ""
+	echo "  GCP: VPC network → Firewall → allow tcp:${DASHBOARD_PORT}, tcp:${API_PORT} to this VM"
+	echo "  Or:"
+	echo "    gcloud compute firewall-rules create trinityproxy \\"
+	echo "      --allow tcp:${DASHBOARD_PORT},tcp:${API_PORT} \\"
+	echo "      --direction=INGRESS --source-ranges=0.0.0.0/0"
+	echo ""
+	echo "  AWS: Security group inbound — TCP ${DASHBOARD_PORT} (dashboard), ${API_PORT} (controller API)"
+	if [[ -n "$ip" ]]; then
+		echo ""
+		echo "  Then open: $(production_http_url "$DASHBOARD_PORT")"
+	fi
+	echo ""
+}
+
+production_configure_ufw_if_active() {
+	local ufw_bin
+	ufw_bin="$(production_resolve_cmd ufw 2>/dev/null || true)"
+	[[ -n "$ufw_bin" ]] || return 0
+	if ! "$ufw_bin" status 2>/dev/null | grep -qiE '^Status:[[:space:]]*active'; then
+		echo "[+] ufw installed but not active (skipping port rules)"
+		return 0
+	fi
+	echo "[*] ufw is active — allowing TCP ${DASHBOARD_PORT} (dashboard) and ${API_PORT} (controller)..."
+	if [[ "$(id -u)" -eq 0 ]]; then
+		"$ufw_bin" allow "${DASHBOARD_PORT}/tcp" >/dev/null 2>&1 || "$ufw_bin" allow "${DASHBOARD_PORT}/tcp"
+		"$ufw_bin" allow "${API_PORT}/tcp" >/dev/null 2>&1 || "$ufw_bin" allow "${API_PORT}/tcp"
+	else
+		echo "[!] Run as root to apply ufw rules: sudo ufw allow ${DASHBOARD_PORT}/tcp && sudo ufw allow ${API_PORT}/tcp"
+	fi
+}
+
+production_curl_local_dashboard_ok() {
+	local curl_bin port
+	curl_bin="$(production_resolve_cmd curl 2>/dev/null || true)"
+	port="${DASHBOARD_PORT:-8081}"
+	[[ -n "$curl_bin" ]] || return 1
+	if "$curl_bin" -sf --connect-timeout 3 "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then
+		return 0
+	fi
+	if "$curl_bin" -sf --connect-timeout 3 "http://127.0.0.1:${port}/" >/dev/null 2>&1; then
+		return 0
+	fi
+	return 1
+}
+
+production_curl_public_dashboard_ok() {
+	local curl_bin port host
+	curl_bin="$(production_resolve_cmd curl 2>/dev/null || true)"
+	port="${DASHBOARD_PORT:-8081}"
+	host="$(production_detect_primary_ip 2>/dev/null || true)"
+	[[ -n "$curl_bin" && -n "$host" ]] || return 1
+	if production_is_private_ip "$host"; then
+		return 1
+	fi
+	if "$curl_bin" -sf --connect-timeout 3 "http://${host}:${port}/health" >/dev/null 2>&1; then
+		return 0
+	fi
+	if "$curl_bin" -sf --connect-timeout 3 "http://${host}:${port}/" >/dev/null 2>&1; then
+		return 0
+	fi
+	return 1
+}
+
+# Returns 0 if local dashboard responds; prints guidance when cloud firewall may block public access.
+production_verify_dashboard_reachable() {
+	local port="${DASHBOARD_PORT:-8081}"
+	if production_curl_local_dashboard_ok; then
+		echo "[+] Dashboard responds at http://127.0.0.1:${port}/"
+		if production_curl_public_dashboard_ok; then
+			echo "[+] Dashboard reachable via detected public IP on :${port}"
+		else
+			echo ""
+			echo "[!] Local dashboard OK, but public URL may be blocked by your cloud firewall."
+			production_print_cloud_firewall_instructions
+		fi
+		return 0
+	fi
+	echo "[!] Dashboard not responding on 127.0.0.1:${port}"
+	echo "    Check: sudo systemctl status trinityproxy-dashboard"
+	echo "    Logs:  sudo journalctl -u trinityproxy-dashboard -n 40 --no-pager"
+	return 1
 }

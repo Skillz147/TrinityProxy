@@ -33,6 +33,8 @@ Runs `scripts/setup.sh` (Go, build tools; Dante optional on controller-only host
 - Writes secrets to `/etc/trinityproxy/controller.env`
 - Starts `trinityproxy-controller` (`:3100`) and `trinityproxy-dashboard` (`:8081`)
 
+**Cloud firewall:** On GCP/AWS, allow inbound **TCP 8081** (dashboard) and **3100** (controller API) in VPC firewall / security group before opening the dashboard URL in your browser. After install, `make start` prints `gcloud` / console steps; optional: `sudo ./scripts/open-production-ports.sh` for **ufw** on the VM.
+
 **Then:** log in → **Settings** (domain) → **Cloudflare SSL** → **Deploy Agent**
 
 ```bash

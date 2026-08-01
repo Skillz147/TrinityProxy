@@ -304,5 +304,32 @@ run_as_root bash -c "
 		production_journalctl -u trinityproxy-controller -n 20 --no-pager || true
 		exit 1
 	fi
+	true
+"
+
+echo "[8/10] Host firewall (ufw)..."
+run_as_root bash -c "
+	set -euo pipefail
+	# shellcheck source=scripts/lib/production-common.sh
+	source '$ROOT/scripts/lib/production-common.sh'
+	production_configure_ufw_if_active
+"
+
+echo "[9/10] Production port checklist..."
+chmod +x "$ROOT/scripts/open-production-ports.sh" 2>/dev/null || true
+
+echo "[10/10] Verifying dashboard reachability..."
+run_as_root bash -c "
+	set -euo pipefail
+	# shellcheck source=scripts/lib/production-common.sh
+	source '$ROOT/scripts/lib/production-common.sh'
+	production_verify_dashboard_reachable || true
+"
+
+run_as_root bash -c "
+	set -euo pipefail
+	cd '$ROOT'
+	# shellcheck source=scripts/lib/production-common.sh
+	source '$ROOT/scripts/lib/production-common.sh'
 	production_print_summary
 "
