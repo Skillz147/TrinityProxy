@@ -82,11 +82,7 @@ dashboard_bin_supports_reset_admin() {
 	if [[ ! -x "$bin" ]]; then
 		return 1
 	fi
-	if command -v strings >/dev/null 2>&1; then
-		strings "$bin" 2>/dev/null | grep -qF '--reset-admin'
-	else
-		grep -aqF '--reset-admin' "$bin" 2>/dev/null
-	fi
+	grep -aq 'reset-admin' "$bin" 2>/dev/null
 }
 
 build_dashboard_for_reset() {
