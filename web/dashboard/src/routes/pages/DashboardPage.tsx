@@ -3,7 +3,6 @@ import { Link } from "react-router-dom";
 import {
   Activity,
   AlertTriangle,
-  CheckCircle2,
   Globe,
   LayoutGrid,
   Monitor,
@@ -12,7 +11,6 @@ import {
   Rocket,
   Server,
   Settings,
-  ShieldAlert,
   WifiOff,
 } from "lucide-react";
 import {
@@ -20,7 +18,6 @@ import {
   DashboardPieChartSkeleton,
   type PieChartDatum,
 } from "@/components/DashboardPieChart";
-import { EmptyState } from "@/components/EmptyState";
 import { ErrorState } from "@/components/ErrorState";
 import {
   HealthBadge,
@@ -40,35 +37,6 @@ import { Skeleton, TableSkeleton } from "@/components/ui/Skeleton";
 import { useAuth } from "@/context/AuthContext";
 import { ApiError, fetchDashboardStats, type DashboardStats } from "@/lib/api";
 import { cn } from "@/lib/utils";
-
-type SystemHealth = DashboardStats["system_health"];
-
-const healthBannerStyles: Record<
-  SystemHealth,
-  { bg: string; border: string; icon: typeof CheckCircle2; label: string; description: string }
-> = {
-  healthy: {
-    bg: "bg-emerald-500/10",
-    border: "border-emerald-500/30",
-    icon: CheckCircle2,
-    label: "System Healthy",
-    description: "All agents are online and passing health checks.",
-  },
-  degraded: {
-    bg: "bg-orange-500/10",
-    border: "border-orange-500/30",
-    icon: AlertTriangle,
-    label: "System Degraded",
-    description: "Some agents are offline or reporting health issues.",
-  },
-  critical: {
-    bg: "bg-destructive/10",
-    border: "border-destructive/30",
-    icon: ShieldAlert,
-    label: "System Critical",
-    description: "Majority of agents are offline or unhealthy. Immediate attention required.",
-  },
-};
 
 const CHART_COLORS = {
   online: "#10b981",
@@ -155,43 +123,9 @@ function formatLastSeen(value: string): string {
   });
 }
 
-function HealthBanner({ health, totalAgents }: { health: SystemHealth; totalAgents: number }) {
-  const config = healthBannerStyles[health];
-  const Icon = config.icon;
-
-  return (
-    <div
-      className={cn(
-        "w-full rounded-lg border p-4 md:p-5",
-        config.bg,
-        config.border,
-      )}
-    >
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-start gap-3">
-          <Icon className={cn("h-6 w-6 shrink-0 mt-0.5", accentStyles[health === "healthy" ? "success" : health === "degraded" ? "warning" : "danger"])} />
-          <div>
-            <h2 className="text-lg font-semibold tracking-tight">{config.label}</h2>
-            <p className="text-sm text-muted-foreground mt-0.5">
-              {totalAgents === 0
-                ? "No agents registered yet. Deploy an agent to begin monitoring."
-                : config.description}
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2 text-sm text-muted-foreground sm:shrink-0">
-          <Activity className="h-4 w-4" aria-hidden="true" />
-          <span className="tabular-nums">{totalAgents} registered agents</span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function DashboardSkeleton() {
   return (
     <div className="w-full space-y-6" aria-busy="true" aria-label="Loading dashboard">
-      <Skeleton className="h-24 w-full rounded-lg" />
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         {Array.from({ length: 5 }).map((_, i) => (
           <Card key={i} className="w-full">
@@ -315,12 +249,8 @@ export function DashboardPage() {
     return null;
   }
 
-  const health = stats.system_health;
-
   return (
     <div className="w-full space-y-6">
-      <HealthBanner health={health} totalAgents={stats.total_agents} />
-
       <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
         <Link to="/agents">
           <Button leftIcon={<LayoutGrid className="h-4 w-4" />}>View Agents</Button>
@@ -345,75 +275,67 @@ export function DashboardPage() {
         </Button>
       </div>
 
-      {stats.total_agents === 0 ? (
-        <EmptyState
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+        <StatCard
+          title="Total agents"
+          value={stats.total_agents}
+          description="All registered proxy nodes"
           icon={Server}
-          title="No agents registered"
-          description="Deploy your first agent from the Deploy Agent page. Once it heartbeats in, monitoring data will appear here."
         />
-      ) : (
-        <>
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
-            <StatCard
-              title="Total agents"
-              value={stats.total_agents}
-              description="All registered proxy nodes"
-              icon={Server}
-            />
-            <StatCard
-              title="Online"
-              value={stats.online}
-              description="Recently heartbeating"
-              icon={Radio}
-              accent="success"
-            />
-            <StatCard
-              title="Offline"
-              value={stats.offline}
-              description="No recent heartbeat"
-              icon={WifiOff}
-              accent="warning"
-            />
-            <StatCard
-              title="Unhealthy"
-              value={stats.unhealthy}
-              description="Failed health probes"
-              icon={AlertTriangle}
-              accent={stats.unhealthy > 0 ? "danger" : "default"}
-            />
-            <StatCard
-              title="Probe failures"
-              value={stats.probe_failures}
-              description="Cumulative SOCKS probe failures"
-              icon={stats.probe_failures > 0 ? AlertTriangle : Activity}
-              accent={stats.probe_failures > 0 ? "danger" : "default"}
-            />
-          </div>
+        <StatCard
+          title="Online"
+          value={stats.online}
+          description="Recently heartbeating"
+          icon={Radio}
+          accent="success"
+        />
+        <StatCard
+          title="Offline"
+          value={stats.offline}
+          description="No recent heartbeat"
+          icon={WifiOff}
+          accent="warning"
+        />
+        <StatCard
+          title="Unhealthy"
+          value={stats.unhealthy}
+          description="Failed health probes"
+          icon={AlertTriangle}
+          accent={stats.unhealthy > 0 ? "danger" : "default"}
+        />
+        <StatCard
+          title="Probe failures"
+          value={stats.probe_failures}
+          description="Cumulative SOCKS probe failures"
+          icon={stats.probe_failures > 0 ? AlertTriangle : Activity}
+          accent={stats.probe_failures > 0 ? "danger" : "default"}
+        />
+      </div>
 
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <DashboardPieChart
-              title="Agent status"
-              data={statusChartData}
-              emptyLabel="No agent status data"
-            />
-            <DashboardPieChart
-              title="Platform"
-              data={platformChartData}
-              emptyLabel="No platform data"
-            />
-            <DashboardPieChart
-              title="Device type"
-              data={deviceChartData}
-              emptyLabel="No device type data"
-            />
-            <DashboardPieChart
-              title="Country distribution"
-              data={countryChartData}
-              emptyLabel="No country data"
-            />
-          </div>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <DashboardPieChart
+          title="Agent status"
+          data={statusChartData}
+          emptyLabel="No agent status data"
+        />
+        <DashboardPieChart
+          title="Platform"
+          data={platformChartData}
+          emptyLabel="No platform data"
+        />
+        <DashboardPieChart
+          title="Device type"
+          data={deviceChartData}
+          emptyLabel="No device type data"
+        />
+        <DashboardPieChart
+          title="Country distribution"
+          data={countryChartData}
+          emptyLabel="No country data"
+        />
+      </div>
 
-          {countryChartData.length > 0 && (
+      {countryChartData.length > 0 && (
             <Card className="w-full">
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm font-medium flex items-center gap-2">
@@ -572,14 +494,15 @@ export function DashboardPage() {
                     {stats.unhealthy} agent{stats.unhealthy === 1 ? "" : "s"} reported unhealthy status.
                   </p>
                 )}
-                {stats.probe_failures === 0 && stats.offline === 0 && stats.unhealthy === 0 && (
-                  <p>All agents are online and healthy. No issues detected.</p>
-                )}
+                {stats.total_agents > 0 &&
+                  stats.probe_failures === 0 &&
+                  stats.offline === 0 &&
+                  stats.unhealthy === 0 && (
+                    <p>All agents are online and healthy. No issues detected.</p>
+                  )}
               </CardContent>
             </Card>
           </div>
-        </>
-      )}
     </div>
   );
 }
