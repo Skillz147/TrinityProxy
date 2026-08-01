@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 #
-# Start TrinityProxy dashboard dev (Go API + Vite UI) in one terminal.
+# Start TrinityProxy local dev stack in one terminal:
+#   - Dashboard API (:8081) + Vite UI (:8080)
+#   - Controller API (:3100) with .env.controller
+#
 # Usage: make start   (or: ./scripts/start-dashboard-dev.sh)
 
 set -euo pipefail
@@ -11,11 +14,15 @@ cd "$ROOT"
 PID_DIR="$ROOT/.dev"
 API_PID_FILE="$PID_DIR/dashboard-api.pid"
 VITE_PID_FILE="$PID_DIR/dashboard-vite.pid"
+CONTROLLER_PID_FILE="$PID_DIR/controller-api.pid"
 API_LOG="$PID_DIR/dashboard-api.log"
 VITE_LOG="$PID_DIR/dashboard-vite.log"
+CONTROLLER_LOG="$PID_DIR/controller-api.log"
 DASHBOARD_BIN="$ROOT/build/trinityproxy-dashboard"
+CONTROLLER_BIN="$ROOT/build/trinityproxy-api"
 DASHBOARD_PORT="${DASHBOARD_PORT:-8081}"
 VITE_PORT="${VITE_PORT:-8080}"
+CONTROLLER_PORT="${CONTROLLER_PORT:-3100}"
 DASHBOARD_DB="${DASHBOARD_DB_PATH:-./dashboard.db}"
 
 mkdir -p "$PID_DIR"
@@ -49,24 +56,29 @@ cleanup() {
 	fi
 	export TRINITY_START_CLEANUP_DONE=1
 	echo ""
-	echo "[*] Stopping dashboard dev servers..."
+	echo "[*] Stopping dev servers..."
 	stop_by_pid_file "$API_PID_FILE"
 	stop_by_pid_file "$VITE_PID_FILE"
+	stop_by_pid_file "$CONTROLLER_PID_FILE"
 	stop_by_port "$VITE_PORT"
 	stop_by_port "$DASHBOARD_PORT"
+	stop_by_port "$CONTROLLER_PORT"
 	exit "$code"
 }
 
 trap cleanup EXIT INT TERM
 
-if lsof -ti:"$VITE_PORT" >/dev/null 2>&1 || lsof -ti:"$DASHBOARD_PORT" >/dev/null 2>&1; then
-	echo "[!] Ports :$VITE_PORT or :$DASHBOARD_PORT are already in use."
+if lsof -ti:"$VITE_PORT" >/dev/null 2>&1 || lsof -ti:"$DASHBOARD_PORT" >/dev/null 2>&1 || lsof -ti:"$CONTROLLER_PORT" >/dev/null 2>&1; then
+	echo "[!] Ports :$VITE_PORT, :$DASHBOARD_PORT, or :$CONTROLLER_PORT are already in use."
 	echo "    Run 'make stop' first, then try again."
 	exit 1
 fi
 
-echo "[*] Building dashboard API..."
+echo "[*] Building dashboard API and controller API..."
 make build-dashboard
+if [[ ! -f "$CONTROLLER_BIN" ]]; then
+	make build
+fi
 
 if [[ ! -d "$ROOT/web/dashboard/node_modules" ]]; then
 	echo "[*] Installing dashboard UI dependencies (first time)..."
@@ -98,6 +110,18 @@ fi
 
 export PATH="/usr/local/go/bin:${PATH:-}"
 
+echo "[*] Starting controller API on :$CONTROLLER_PORT..."
+(
+	set -a
+	if [[ -f "$ROOT/.env.controller" ]]; then
+		# shellcheck source=/dev/null
+		. "$ROOT/.env.controller"
+	fi
+	set +a
+	API_PORT="$CONTROLLER_PORT" "$CONTROLLER_BIN"
+) >>"$CONTROLLER_LOG" 2>&1 &
+echo $! >"$CONTROLLER_PID_FILE"
+
 echo "[*] Starting dashboard API on :$DASHBOARD_PORT..."
 DASHBOARD_PORT="$DASHBOARD_PORT" "$DASHBOARD_BIN" >>"$API_LOG" 2>&1 &
 echo $! >"$API_PID_FILE"
@@ -125,15 +149,17 @@ wait_for_port() {
 	exit 1
 }
 
+wait_for_port "$CONTROLLER_PORT" "Controller API" "$CONTROLLER_LOG"
 wait_for_port "$DASHBOARD_PORT" "Dashboard API" "$API_LOG"
 wait_for_port "$VITE_PORT" "Dashboard UI" "$VITE_LOG"
 
 echo ""
 echo "============================================"
-echo "  TrinityProxy Dashboard is ready"
+echo "  TrinityProxy is ready"
 echo "============================================"
 echo ""
-echo "  Open:  http://localhost:$VITE_PORT"
+echo "  Dashboard:   http://localhost:$VITE_PORT"
+echo "  Controller:  http://localhost:$CONTROLLER_PORT"
 echo ""
 echo "  First time?"
 echo "    1. Log in with the credentials above (if shown)"
@@ -141,12 +167,12 @@ echo "    2. Change your password when prompted"
 echo "    3. Settings — enter your domain and click Save"
 echo "    4. Deploy Agent — copy the install command to your VPS"
 echo ""
-echo "  Controller API:  make start-controller  (syncs key + starts :3100)
-  macOS agent dev: make run-agent-dev     (embedded SOCKS :1080, no Dante)"
+echo "  macOS agent dev: make run-agent-dev  (embedded SOCKS :1080)"
 echo ""
 echo "  Press Ctrl+C to stop."
 echo "  Or run 'make stop' from another terminal."
 echo ""
 
+wait "$(cat "$CONTROLLER_PID_FILE")" 2>/dev/null || true
 wait "$(cat "$API_PID_FILE")" 2>/dev/null || true
 wait "$(cat "$VITE_PID_FILE")" 2>/dev/null || true

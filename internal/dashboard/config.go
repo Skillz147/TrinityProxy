@@ -29,6 +29,7 @@ type Config struct {
 	DashboardURL   string
 	ViteDevURL     string
 	DevProxy       bool
+	StaticDir      string
 	ControllerURL  string
 	AgentKey       string
 	AdminUsername  string
@@ -47,6 +48,7 @@ func LoadConfig() Config {
 		DashboardURL:  envString("DASHBOARD_URL", defaultDashboardURL),
 		ViteDevURL:    viteURL,
 		DevProxy:      devProxy,
+		StaticDir:     envString("DASHBOARD_STATIC_DIR", ""),
 		ControllerURL: envString("CONTROLLER_URL", config.Load().ControllerURL),
 		AgentKey:      envString("TRINITY_AGENT_KEY", config.Load().AgentKey),
 		AdminUsername: envString("DASHBOARD_ADMIN_USERNAME", "admin"),

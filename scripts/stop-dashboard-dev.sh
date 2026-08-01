@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Stop TrinityProxy dashboard dev servers started by make start.
+# Stop TrinityProxy dev servers started by make start.
 # Usage: make stop   (or: ./scripts/stop-dashboard-dev.sh)
 
 set -euo pipefail
@@ -9,8 +9,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PID_DIR="$ROOT/.dev"
 API_PID_FILE="$PID_DIR/dashboard-api.pid"
 VITE_PID_FILE="$PID_DIR/dashboard-vite.pid"
+CONTROLLER_PID_FILE="$PID_DIR/controller-api.pid"
 DASHBOARD_PORT="${DASHBOARD_PORT:-8081}"
 VITE_PORT="${VITE_PORT:-8080}"
+CONTROLLER_PORT="${CONTROLLER_PORT:-3100}"
 
 stopped=0
 
@@ -45,13 +47,15 @@ stop_port() {
 	stopped=1
 }
 
+stop_pid_file "$CONTROLLER_PID_FILE" "controller API"
 stop_pid_file "$API_PID_FILE" "dashboard API"
 stop_pid_file "$VITE_PID_FILE" "dashboard UI"
+stop_port "$CONTROLLER_PORT" "controller API"
 stop_port "$VITE_PORT" "Vite UI"
 stop_port "$DASHBOARD_PORT" "dashboard API"
 
 if [[ "$stopped" -eq 1 ]]; then
-	echo "[+] Dashboard dev servers stopped."
+	echo "[+] Dev servers stopped."
 else
-	echo "[*] No dashboard dev servers were running."
+	echo "[*] No dev servers were running."
 fi

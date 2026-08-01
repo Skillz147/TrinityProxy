@@ -68,6 +68,12 @@ chmod 644 /etc/systemd/system/trinityproxy-controller.service
 
 # Reload systemd and enable the service
 echo "[*] Enabling TrinityProxy Controller service..."
+if [[ -f .env.controller ]]; then
+	install -d -m 750 /etc/trinityproxy
+	grep -E '^export TRINITY_AGENT_KEY=' .env.controller | sed 's/^export //' > /etc/trinityproxy/controller.env
+	chmod 640 /etc/trinityproxy/controller.env
+	echo "[+] Wrote /etc/trinityproxy/controller.env from .env.controller"
+fi
 systemctl daemon-reload
 systemctl enable trinityproxy-controller
 systemctl start trinityproxy-controller

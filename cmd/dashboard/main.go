@@ -8,6 +8,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/Skillz147/TrinityProxy/internal/dashboard"
@@ -65,7 +66,9 @@ func main() {
 	mux := http.NewServeMux()
 	server.RegisterRoutes(mux)
 
-	if !cfg.DevProxy {
+	if cfg.StaticDir != "" {
+		registerStaticUI(mux, cfg.StaticDir, log)
+	} else if !cfg.DevProxy {
 		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path != "/" {
 				http.NotFound(w, r)
@@ -77,7 +80,7 @@ func main() {
 			fmt.Fprintf(w, "This process serves /api/* and /health only.\n")
 			fmt.Fprintf(w, "Open the UI at %s (Vite dev server on :8080)\n", cfg.DashboardURL)
 			fmt.Fprintf(w, "Terminal 2: cd web/dashboard && npm run dev\n")
-			fmt.Fprintf(w, "Setup help: make dashboard-dev | make run-dashboard (hyphen, not space)\n")
+			fmt.Fprintf(w, "Setup help: make start | make dashboard-dev\n")
 		})
 	}
 
@@ -98,14 +101,23 @@ func main() {
 	}
 
 	addr := cfg.ListenAddr()
-	log.Info("dashboard API listening (UI is a separate Vite dev server)",
-		"addr", addr,
-		"open_ui", cfg.DashboardURL,
-		"ui_command", "cd web/dashboard && npm run dev",
-		"make_hint", "make dashboard-dev",
-		"auth_db", cfg.DBPath,
-		"nodes_db", cfg.NodesDBPath,
-	)
+	if cfg.StaticDir != "" {
+		log.Info("dashboard listening with built UI",
+			"addr", addr,
+			"static_dir", cfg.StaticDir,
+			"auth_db", cfg.DBPath,
+			"nodes_db", cfg.NodesDBPath,
+		)
+	} else {
+		log.Info("dashboard API listening (UI is a separate Vite dev server)",
+			"addr", addr,
+			"open_ui", cfg.DashboardURL,
+			"ui_command", "cd web/dashboard && npm run dev",
+			"make_hint", "make start",
+			"auth_db", cfg.DBPath,
+			"nodes_db", cfg.NodesDBPath,
+		)
+	}
 	log.Info("endpoints registered",
 		"login", "POST /api/auth/login",
 		"logout", "POST /api/auth/logout",
@@ -132,6 +144,42 @@ func main() {
 	if err := http.Serve(ln, mux); err != nil {
 		logutil.Fatal(log, "dashboard server failed", "err", err)
 	}
+}
+
+func registerStaticUI(mux *http.ServeMux, staticDir string, log *slog.Logger) {
+	absDir, err := filepath.Abs(staticDir)
+	if err != nil {
+		logutil.Fatal(log, "invalid DASHBOARD_STATIC_DIR", "err", err, "dir", staticDir)
+	}
+	info, err := os.Stat(absDir)
+	if err != nil || !info.IsDir() {
+		logutil.Fatal(log, "DASHBOARD_STATIC_DIR is missing or not a directory", "dir", absDir)
+	}
+	indexPath := filepath.Join(absDir, "index.html")
+	if _, err := os.Stat(indexPath); err != nil {
+		logutil.Fatal(log, "DASHBOARD_STATIC_DIR missing index.html — run: cd web/dashboard && npm run build", "dir", absDir)
+	}
+
+	fileServer := http.FileServer(http.Dir(absDir))
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			http.NotFound(w, r)
+			return
+		}
+		if r.URL.Path != "/" {
+			path := filepath.Join(absDir, filepath.Clean("/"+r.URL.Path))
+			if rel, err := filepath.Rel(absDir, path); err != nil || strings.HasPrefix(rel, "..") {
+				http.NotFound(w, r)
+				return
+			}
+			if info, err := os.Stat(path); err == nil && !info.IsDir() {
+				fileServer.ServeHTTP(w, r)
+				return
+			}
+		}
+		http.ServeFile(w, r, indexPath)
+	})
+	log.Info("serving built dashboard UI", "dir", absDir)
 }
 
 func printBootstrapCredentials(dashboardURL, username, tempPassword string) {

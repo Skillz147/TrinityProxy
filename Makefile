@@ -1,7 +1,7 @@
 # TrinityProxy Makefile
 # Easy build and deployment for SOCKS5 proxy network
 
-.PHONY: help build build-main build-dashboard build-windows-agent build-darwin-agent build-linux-amd64 build-linux-arm64 install-agent-macos clean install deps test run-controller start-controller run-agent run-agent-dev docker-agent test-agent-docker docker-agent-down setup-dev check-deps format lint setup-system vps-setup setup-api-controller quickstart debug cleanup install-service start-service stop-service start stop dashboard dashboard-dev dashboard-init dashboard-run dashboard-up run-dashboard sync-agent-key
+.PHONY: help build build-main build-dashboard build-windows-agent build-darwin-agent build-linux-amd64 build-linux-arm64 install-agent-macos clean install deps test run-controller start-controller run-agent run-agent-dev docker-agent test-agent-docker docker-agent-down setup-dev check-deps format lint setup-system vps-setup setup-api-controller quickstart debug cleanup install-service install-dashboard-service install-production start-service stop-service start stop dashboard dashboard-dev dashboard-init dashboard-run dashboard-up run-dashboard sync-agent-key
 
 # Catch accidental "make run dashboard" (space) — the target is run-dashboard (hyphen).
 ifneq (,$(filter dashboard,$(MAKECMDGOALS)))
@@ -19,10 +19,9 @@ help:
 	@echo "========================="
 	@echo ""
 	@echo "🚀 SIMPLE COMMANDS (for users):"
-	@echo "  make start             - Start dashboard (API + UI) — open http://localhost:8080"
-	@echo "  make stop              - Stop dashboard dev servers"
-	@echo "  make run-controller    - Start API controller (loads .env.controller if present)"
-	@echo "  make start-controller  - Sync agent key from dashboard, then start controller"
+	@echo "  make start             - Start everything for local dev (dashboard + controller)"
+	@echo "  make stop              - Stop all dev servers"
+	@echo "  make install-production - VPS: install controller + dashboard systemd (auto-restart on boot)"
 	@echo "  make run-agent         - Complete agent setup (Linux: systemd + Dante)"
 	@echo "  make run-agent-dev     - macOS/local dev agent (embedded SOCKS :1080, foreground)"
 	@echo "  make docker-agent      - Linux agent in Docker (simulates VPS; needs Docker Desktop)"
@@ -48,8 +47,8 @@ help:
 	@echo "  make clean             - Clean build artifacts"
 	@echo ""
 	@echo "Development:"
-	@echo "  make start             - Start dashboard dev (API + UI, one command)"
-	@echo "  make stop              - Stop dashboard dev servers"
+	@echo "  make start             - Start full dev stack (dashboard :8080/:8081 + controller :3100)"
+	@echo "  make stop              - Stop all dev servers"
 	@echo "  make setup-dev         - Complete development setup"
 	@echo "  make dashboard-dev     - Quick reminder: make start"
 	@echo "  make run-dashboard     - Start dashboard API only on :8081 (advanced)"
@@ -62,8 +61,9 @@ help:
 	@echo "  make check-deps        - Check system dependencies"
 	@echo ""
 	@echo "VPS Deployment:"
-	@echo "  make setup-api-controller - Print Caddy SSL setup instructions (deprecated target)"
-	@echo "  make install-service      - Install controller as systemd service"
+	@echo "  make install-production   - Install controller + dashboard systemd (auto-restart on boot)"
+	@echo "  make install-service      - Install controller systemd only"
+	@echo "  make install-dashboard-service - Install dashboard systemd only"
 	@echo "  make install-agent-service - Install agent as systemd service"
 	@echo "  make install-agent-macos   - Install agent as macOS launchd service"
 	@echo "  make start-service        - Start systemd controller service"
@@ -371,7 +371,7 @@ docker-agent test-agent-docker:
 		exit 1; \
 	fi
 	@if [ ! -f .env.controller ]; then \
-		echo "[!] No .env.controller — run 'make start' then 'make sync-agent-key' first"; \
+		echo "[!] No .env.controller — run 'make start' (syncs key automatically) or 'make sync-agent-key'"; \
 		exit 1; \
 	fi
 	@echo "[*] Building and starting Linux agent container..."
@@ -457,36 +457,37 @@ dashboard-dev:
 	@echo "Open in browser:      http://localhost:8080"
 	@echo "Stop when done:       make stop"
 
-# Check whether Vite (:8080) and dashboard API (:8081) are listening
+# Check whether Vite (:8080), dashboard API (:8081), and controller (:3100) are listening
 dashboard-up:
-	@echo "TrinityProxy Dashboard — service check"
-	@echo "======================================"
-	@VITE_UP=0; API_UP=0; \
+	@echo "TrinityProxy — service check"
+	@echo "=============================="
+	@VITE_UP=0; API_UP=0; CTRL_UP=0; \
 	if lsof -ti:8080 >/dev/null 2>&1; then \
 		VITE_UP=1; \
-		echo "[+] :8080 — Vite UI running (http://localhost:8080)"; \
+		echo "[+] :8080 — Dashboard UI running (http://localhost:8080)"; \
 	else \
-		echo "[-] :8080 — Vite UI not running"; \
-		echo "        Start: make start"; \
+		echo "[-] :8080 — Dashboard UI not running"; \
 	fi; \
 	if lsof -ti:8081 >/dev/null 2>&1; then \
 		API_UP=1; \
 		echo "[+] :8081 — Dashboard API running"; \
 	else \
 		echo "[-] :8081 — Dashboard API not running"; \
-		echo "        Start: make run-dashboard  (hyphen — not 'make run dashboard')"; \
+	fi; \
+	if lsof -ti:3100 >/dev/null 2>&1; then \
+		CTRL_UP=1; \
+		echo "[+] :3100 — Controller API running"; \
+	else \
+		echo "[-] :3100 — Controller API not running"; \
 	fi; \
 	echo ""; \
-	if [ $$VITE_UP -eq 1 ] && [ $$API_UP -eq 1 ]; then \
+	if [ $$VITE_UP -eq 1 ] && [ $$API_UP -eq 1 ] && [ $$CTRL_UP -eq 1 ]; then \
 		echo "Ready — open http://localhost:8080"; \
-	elif [ $$API_UP -eq 1 ]; then \
-		echo "API is up; start Vite in another terminal (see above)."; \
-		exit 1; \
-	elif [ $$VITE_UP -eq 1 ]; then \
-		echo "Vite is up; start the API with: make run-dashboard"; \
+	elif [ $$VITE_UP -eq 1 ] && [ $$API_UP -eq 1 ]; then \
+		echo "Dashboard ready; controller missing — run 'make start'"; \
 		exit 1; \
 	else \
-		echo "Not ready — run 'make start' to launch the dashboard."; \
+		echo "Not ready — run 'make start'"; \
 		exit 1; \
 	fi
 
@@ -516,9 +517,10 @@ quickstart:
 	@echo "[5/5] Ready to run!"
 	@echo ""
 	@echo "🚀 SIMPLE USAGE:"
-	@echo "  make run-controller   - Start as API controller (auto-installs everything)"
+	@echo "  make start            - Full local dev (dashboard + controller)"
 	@echo "  make run-agent        - Complete agent setup (Linux VPS: systemd + Dante)"
 	@echo "  make run-agent-dev    - macOS/local dev agent (embedded SOCKS :1080)"
+	@echo "  make install-production - VPS: systemd services for controller + dashboard"
 	@echo "  make run              - Interactive selection"
 	@echo ""
 
@@ -614,6 +616,28 @@ install-service: build-main $(API_BINARY)
 		echo "[+] TrinityProxy Controller service installed!"; \
 	else \
 		echo "[!] Service installation script not found."; \
+		exit 1; \
+	fi
+
+# Install dashboard as systemd service (API + built UI on :8081)
+install-dashboard-service: build-dashboard
+	@if [ -f "scripts/install-dashboard-service.sh" ]; then \
+		echo "[*] Installing TrinityProxy Dashboard as systemd service..."; \
+		chmod +x scripts/install-dashboard-service.sh; \
+		sudo bash scripts/install-dashboard-service.sh; \
+		echo "[+] TrinityProxy Dashboard service installed!"; \
+	else \
+		echo "[!] Dashboard service installation script not found."; \
+		exit 1; \
+	fi
+
+# Install both controller + dashboard for VPS production
+install-production: build
+	@if [ -f "scripts/install-production.sh" ]; then \
+		chmod +x scripts/install-production.sh; \
+		sudo bash scripts/install-production.sh; \
+	else \
+		echo "[!] install-production.sh not found."; \
 		exit 1; \
 	fi
 
