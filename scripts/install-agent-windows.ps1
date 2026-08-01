@@ -42,6 +42,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+if (-not $UseScheduledTask -and $env:TRINITY_USE_SCHEDULED_TASK -eq "1") {
+    $UseScheduledTask = $true
+}
+
 $ServiceName = "TrinityProxyAgent"
 $ServiceDisplayName = "TrinityProxy Agent"
 $BinaryName = "trinityproxy.exe"
@@ -143,16 +147,16 @@ function Invoke-BootstrapRepoAndReenter {
     }
 
     Write-Ok "Running installer from $cloneDir"
-    $argList = @()
-    if ($ControllerUrl) { $argList += "-ControllerUrl"; $argList += $ControllerUrl }
-    if ($AgentKey) { $argList += "-AgentKey"; $argList += $AgentKey }
-    if ($SocksPort) { $argList += "-SocksPort"; $argList += $SocksPort }
-    if ($LocalBinary) { $argList += "-LocalBinary"; $argList += $LocalBinary }
-    if ($DownloadUrl) { $argList += "-DownloadUrl"; $argList += $DownloadUrl }
-    if ($InstallDir) { $argList += "-InstallDir"; $argList += $InstallDir }
-    if ($UseScheduledTask) { $argList += "-UseScheduledTask" }
+    # Re-enter via environment only — avoids PowerShell mis-binding (e.g. -AgentKey -> SocksPort).
+    if ($ControllerUrl) { $env:CONTROLLER_URL = $ControllerUrl.Trim() }
+    if ($AgentKey) { $env:TRINITY_AGENT_KEY = $AgentKey }
+    if ($SocksPort) { $env:TRINITY_SOCKS_PORT = $SocksPort }
+    if ($LocalBinary) { $env:TRINITY_LOCAL_BINARY = $LocalBinary }
+    if ($DownloadUrl) { $env:TRINITY_DOWNLOAD_URL = $DownloadUrl }
+    if ($InstallDir) { $env:TRINITY_INSTALL_DIR = $InstallDir }
+    if ($UseScheduledTask) { $env:TRINITY_USE_SCHEDULED_TASK = "1" }
 
-    & $installer @argList
+    & $installer
     exit $LASTEXITCODE
 }
 
@@ -232,14 +236,16 @@ function Assert-RepoScriptLocation {
 
 
 function Resolve-SocksPort {
-    if (-not $SocksPort) {
+    $raw = if ($SocksPort) { $SocksPort } else { $env:TRINITY_SOCKS_PORT }
+    if (-not $raw -or ($raw -match '^\s*-')) {
         return $DefaultSocksPort
     }
     $parsed = 0
-    if (-not [int]::TryParse($SocksPort, [ref]$parsed) -or $parsed -lt 1 -or $parsed -gt 65535) {
-        throw "TRINITY_SOCKS_PORT must be a number between 1 and 65535 (got: $SocksPort)"
+    if ([int]::TryParse($raw.Trim(), [ref]$parsed) -and $parsed -ge 1 -and $parsed -le 65535) {
+        return $parsed
     }
-    return $parsed
+    Write-Warn "Ignoring invalid TRINITY_SOCKS_PORT (got: $raw); using $DefaultSocksPort"
+    return $DefaultSocksPort
 }
 
 function Resolve-SourceBinary {
