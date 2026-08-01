@@ -1,7 +1,7 @@
 # TrinityProxy Makefile
 # Easy build and deployment for SOCKS5 proxy network
 
-.PHONY: help build build-main build-dashboard build-dashboard-ui build-windows-agent build-darwin-agent build-linux-amd64 build-linux-arm64 install-agent-macos clean install deps test run-controller start-controller run-agent run-agent-dev docker-agent test-agent-docker docker-agent-down setup-dev check-deps format lint setup-system vps-setup setup-api-controller quickstart debug cleanup install-service install-dashboard-service install-production start-service stop-service start start-dev stop stop-production uninstall-production uninstall dashboard dashboard-dev dashboard-init dashboard-run dashboard-up run-dashboard sync-agent-key sync-deployment-settings setup-domain
+.PHONY: help build build-main build-dashboard build-dashboard-ui build-windows-agent build-darwin-agent build-linux-amd64 build-linux-arm64 install-agent-macos clean install deps test run-controller start-controller run-agent run-agent-dev docker-agent test-agent-docker docker-agent-down setup-dev check-deps format lint setup-system vps-setup setup-api-controller quickstart debug cleanup install-service install-dashboard-service install-production start-service stop-service start start-dev stop stop-production uninstall-production uninstall dashboard dashboard-dev dashboard-init dashboard-run dashboard-up run-dashboard sync-agent-key sync-deployment-settings setup-domain reset-dashboard-admin reset-dashboard-admin-dev fix-dev-permissions
 
 # Catch accidental "make run dashboard" (space) — the target is run-dashboard (hyphen).
 ifneq (,$(filter dashboard,$(MAKECMDGOALS)))
@@ -25,12 +25,16 @@ help:
 	@echo "TrinityProxy"
 	@echo "============"
 	@echo ""
-	@echo "  make start          - PRODUCTION: install + run on VPS (deps, build, secrets, systemd)"
+	@echo "  make start          - PRODUCTION (Linux VPS): install + run via systemd"
+	@echo "                        On macOS: same as make start-dev (local only)"
 	@echo "  make uninstall-production - Remove prod install (systemd, /opt, data, config); fresh: sudo make start"
 	@echo "  make uninstall          - Alias for uninstall-production"
 	@echo "  make setup-domain   - VPS: interactive domain + Cloudflare wildcard SSL (sudo)"
 	@echo "  make start-dev      - LOCAL DEV: Vite :8080, dashboard API :8081, controller :3100"
+	@echo "                        Uses .dev/*.db — never touches production VPS"
 	@echo "  make stop           - Stop local dev servers"
+	@echo "  make reset-dashboard-admin-dev - Reset admin login in .dev/dashboard.db (no sudo)"
+	@echo "  make fix-dev-permissions  - Fix root-owned web/dashboard/dist after sudo make start"
 	@echo "  make run-agent-dev  - macOS/local dev agent (embedded SOCKS :1080, foreground)"
 	@echo "  make build          - Build all binaries"
 
@@ -235,6 +239,21 @@ run: build
 	@echo "[*] Starting TrinityProxy with interactive setup..."
 	@export PATH="/usr/local/go/bin:$$PATH"; ./$(BUILD_DIR)/$(BINARY_NAME)
 
+# Load dev or controller env for agent/controller targets
+define load-dev-env
+set -a; \
+if [ -f scripts/lib/dev-env.sh ]; then \
+	. scripts/lib/dev-env.sh; \
+	dev_env_apply; \
+	if [ -f "$$DEV_CONTROLLER_ENV" ]; then \
+		. "$$DEV_CONTROLLER_ENV"; \
+	fi; \
+elif [ -f .env.controller ]; then \
+	. ./.env.controller; \
+fi; \
+set +a;
+endef
+
 # Load .env.controller (TRINITY_AGENT_KEY) when present — written by make sync-agent-key
 define load-controller-env
 set -a; \
@@ -307,19 +326,11 @@ run-agent-dev: build-main
 	@echo ""
 	@echo "============================================"
 	@echo "  macOS dev mode — embedded SOCKS on :1080 (no Dante)"
+	@echo "  LOCAL ONLY — heartbeats go to localhost"
 	@echo "============================================"
 	@echo ""
-	@if [ -f .env.controller ]; then \
-		echo "[*] Loading .env.controller (TRINITY_AGENT_KEY)"; \
-	else \
-		echo "[!] No .env.controller — run 'make sync-agent-key' after dashboard generates an agent key"; \
-	fi
-	@echo "[*] Controller: $${CONTROLLER_URL:-http://127.0.0.1:3100}"
-	@echo "[*] SOCKS5: :$${TRINITY_SOCKS_PORT:-1080} (user=dev, pass=dev)"
-	@echo "[*] Press Ctrl+C to stop."
-	@echo ""
 	@export PATH="/usr/local/go/bin:$$PATH"; \
-	$(load-controller-env) \
+	$(load-dev-env) \
 	CONTROLLER_URL="$${CONTROLLER_URL:-http://127.0.0.1:3100}" \
 	TRINITY_ROLE=agent \
 	TRINITY_DEV=1 \
@@ -386,7 +397,12 @@ dev-agent: build-main
 	fi
 
 # Production — full VPS bootstrap (deps, build, secrets, systemd, credentials)
+# On macOS, delegates to start-dev (local only).
 start:
+	@if [ "$$(uname -s)" = "Darwin" ]; then \
+		echo "[*] macOS: make start runs LOCAL DEV (same as make start-dev)."; \
+		echo "[*] Do not use sudo. Production runs on your Linux VPS."; \
+	fi
 	@chmod +x scripts/start-production.sh
 	@./scripts/start-production.sh
 
@@ -440,6 +456,17 @@ sync-deployment-settings:
 reset-dashboard-admin reset-admin:
 	@chmod +x scripts/reset-dashboard-admin.sh scripts/lib/production-common.sh
 	@./scripts/reset-dashboard-admin.sh
+
+
+# Fix root-owned dashboard UI dirs after accidental sudo make start (macOS local dev)
+fix-dev-permissions:
+	@chmod +x scripts/fix-dev-permissions.sh scripts/lib/dev-ui-permissions.sh
+	@./scripts/fix-dev-permissions.sh
+
+# Reset admin in local dev database (.dev/dashboard.db) — no sudo
+reset-dashboard-admin-dev:
+	@chmod +x scripts/reset-dashboard-admin.sh scripts/lib/production-common.sh
+	@TRINITY_DEV=1 DASHBOARD_DB_PATH="$(CURDIR)/.dev/dashboard.db" DASHBOARD_URL="http://localhost:8080" ./scripts/reset-dashboard-admin.sh
 
 # Bootstrap initial dashboard admin (prints temp credentials once)
 dashboard-init: build-dashboard

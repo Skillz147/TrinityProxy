@@ -15,6 +15,17 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+
+# Auto-detect local dev when .dev/dashboard.db exists or TRINITY_DEV=1.
+if [[ "${TRINITY_DEV:-}" == "1" ]] || [[ -f "$ROOT/.dev/dashboard.db" ]]; then
+	if [[ -z "${DASHBOARD_DB_PATH:-}" ]]; then
+		export DASHBOARD_DB_PATH="$ROOT/.dev/dashboard.db"
+	fi
+	if [[ -z "${DASHBOARD_URL:-}" ]]; then
+		export DASHBOARD_URL="http://localhost:8080"
+	fi
+fi
+
 # shellcheck source=scripts/lib/production-common.sh
 source "$ROOT/scripts/lib/production-common.sh"
 
@@ -22,7 +33,8 @@ DASHBOARD_DB="${DASHBOARD_DB_PATH:-$STATE_DIR/dashboard.db}"
 DASHBOARD_BIN="${TRINITY_DASHBOARD_BIN:-}"
 
 usage() {
-	echo "Usage: sudo $0"
+	echo "Usage: sudo $0   (production VPS)"
+	echo "       make reset-dashboard-admin-dev   (local dev on macOS/Linux)"
 	echo "  Resets dashboard admin credentials in: $DASHBOARD_DB"
 	echo "  Agent keys and deployment data in the same database are kept."
 }
@@ -41,13 +53,27 @@ for arg in "$@"; do
 done
 
 if [[ "$DASHBOARD_DB" == "$STATE_DIR/dashboard.db" ]] && [[ $EUID -ne 0 ]]; then
-	echo "[-] Error: production reset requires root (e.g. sudo make reset-dashboard-admin)" >&2
+	echo "[-] Error: production reset requires root (run on your VPS: sudo make reset-dashboard-admin)" >&2
+	echo "    Local dev: make reset-dashboard-admin-dev" >&2
 	exit 1
+fi
+
+is_dev_db=0
+if [[ "$DASHBOARD_DB" == "$ROOT/.dev/dashboard.db" ]] || [[ "${TRINITY_DEV:-}" == "1" ]]; then
+	is_dev_db=1
+fi
+
+if [[ $is_dev_db -eq 1 ]]; then
+	echo "[*] Local dev reset (no sudo): $DASHBOARD_DB"
 fi
 
 if [[ ! -f "$DASHBOARD_DB" ]]; then
 	echo "[-] Error: dashboard database not found: $DASHBOARD_DB" >&2
-	echo "    Install first: sudo make start  (or set DASHBOARD_DB_PATH for dev)" >&2
+	if [[ $is_dev_db -eq 1 ]]; then
+		echo "    Run 'make start-dev' first to create the dev database." >&2
+	else
+		echo "    Install first: sudo make start  (or set DASHBOARD_DB_PATH for dev)" >&2
+	fi
 	exit 1
 fi
 

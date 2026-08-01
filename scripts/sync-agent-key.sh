@@ -24,11 +24,16 @@ cd "$ROOT"
 # shellcheck source=scripts/lib/production-common.sh
 source "$ROOT/scripts/lib/production-common.sh"
 
-DASHBOARD_DB="${DASHBOARD_DB_PATH:-./dashboard.db}"
-OUTPUT="${CONTROLLER_ENV_FILE:-.env.controller}"
+if [[ "${TRINITY_DEV:-}" == "1" ]]; then
+	DASHBOARD_DB="${DASHBOARD_DB_PATH:-$ROOT/.dev/dashboard.db}"
+	OUTPUT="${CONTROLLER_ENV_FILE:-$ROOT/.dev/.env.controller}"
+else
+	DASHBOARD_DB="${DASHBOARD_DB_PATH:-./dashboard.db}"
+	OUTPUT="${CONTROLLER_ENV_FILE:-.env.controller}"
+fi
 ENV_SOURCE="${ENV_FILE:-.env}"
 
-if [[ "$OUTPUT" == /etc/trinityproxy/controller.env ]] && [[ "$DASHBOARD_DB" == "./dashboard.db" ]]; then
+if [[ "$OUTPUT" == /etc/trinityproxy/controller.env ]] && [[ "$DASHBOARD_DB" == "./dashboard.db" ]] && [[ "${TRINITY_DEV:-}" != "1" ]]; then
 	DASHBOARD_DB="/var/lib/trinityproxy/dashboard.db"
 fi
 

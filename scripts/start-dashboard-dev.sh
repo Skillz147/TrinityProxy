@@ -2,7 +2,7 @@
 #
 # Start TrinityProxy local dev stack in one terminal:
 #   - Dashboard API (:8081) + Vite UI (:8080)
-#   - Controller API (:3100) with .env.controller
+#   - Controller API (:3100) with isolated .dev/ secrets
 #
 # Usage: make start-dev   (or: ./scripts/start-dashboard-dev.sh)
 
@@ -11,10 +11,26 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+if [[ "$(uname -s)" == "Darwin" ]] && [[ $EUID -eq 0 ]]; then
+	echo "[-] Error: do not run 'sudo make start-dev' on macOS."
+	echo "    Local dev runs as your user: make start-dev"
+	echo "    Production bootstrap runs on your Linux VPS: ssh user@vps 'cd TrinityProxy && sudo make start'"
+	exit 1
+fi
+
 # shellcheck source=scripts/lib/dev-ports.sh
 source "$ROOT/scripts/lib/dev-ports.sh"
+# shellcheck source=scripts/lib/dev-env.sh
+source "$ROOT/scripts/lib/dev-env.sh"
+DEV_ENV_ROOT="$ROOT"
+dev_env_apply
+dev_env_print_banner
 
-PID_DIR="$ROOT/.dev"
+# Restore UI dist ownership before npm/go build (sudo make start leaves root-owned dirs).
+chmod +x scripts/fix-dev-permissions.sh scripts/lib/dev-ui-permissions.sh 2>/dev/null || true
+./scripts/fix-dev-permissions.sh --auto 2>/dev/null || true
+
+PID_DIR="$DEV_DIR"
 API_PID_FILE="$PID_DIR/dashboard-api.pid"
 VITE_PID_FILE="$PID_DIR/dashboard-vite.pid"
 CONTROLLER_PID_FILE="$PID_DIR/controller-api.pid"
@@ -26,7 +42,7 @@ CONTROLLER_BIN="$ROOT/build/trinityproxy-api"
 DASHBOARD_PORT="${DASHBOARD_PORT:-8081}"
 VITE_PORT="${VITE_PORT:-8080}"
 CONTROLLER_PORT="${CONTROLLER_PORT:-3100}"
-DASHBOARD_DB="${DASHBOARD_DB_PATH:-./dashboard.db}"
+DASHBOARD_DB="$DASHBOARD_DB_PATH"
 
 mkdir -p "$PID_DIR"
 
@@ -67,10 +83,27 @@ if dev_ports_in_use; then
 	echo "[+] Ports cleared."
 fi
 
-echo "[*] Building dashboard API and controller API..."
+echo "[*] Building dev binaries for this machine..."
 make build-dashboard
-if [[ ! -f "$CONTROLLER_BIN" ]]; then
-	make build
+make build-main
+
+# Rebuild controller if cross-compiled for another OS (e.g. Linux ELF on macOS).
+if [[ -f "$CONTROLLER_BIN" ]]; then
+	bin_type="$(file -b "$CONTROLLER_BIN" 2>/dev/null || true)"
+	need_rebuild=0
+	case "$(uname -s)" in
+	Darwin)
+		[[ "$bin_type" != *"Mach-O"* ]] && need_rebuild=1
+		;;
+	Linux)
+		[[ "$bin_type" != *"ELF"* ]] && need_rebuild=1
+		;;
+	esac
+	if [[ $need_rebuild -eq 1 ]]; then
+		echo "[*] Rebuilding controller API for $(uname -s)/$(uname -m) (was: ${bin_type:-unknown})..."
+		export PATH="/usr/local/go/bin:${PATH:-}"
+		go build -o "$CONTROLLER_BIN" ./cmd/api
+	fi
 fi
 
 if [[ ! -d "$ROOT/web/dashboard/node_modules" ]]; then
@@ -87,7 +120,11 @@ fi
 
 if [[ "$needs_admin_init" -eq 1 ]]; then
 	echo "[*] Creating your admin login (shown once)..."
-	"$DASHBOARD_BIN" --init-only
+	DASHBOARD_DB_PATH="$DASHBOARD_DB" \
+		DB_PATH="$DB_PATH" \
+		CONTROLLER_URL="$CONTROLLER_URL" \
+		TRINITY_AGENT_KEY="$TRINITY_AGENT_KEY" \
+		"$DASHBOARD_BIN" --init-only
 else
 	echo "[*] Admin account ready."
 fi
@@ -97,7 +134,8 @@ if command -v sqlite3 >/dev/null 2>&1 && [[ -f "$DASHBOARD_DB" ]]; then
 	key="${key//$'\r'/}"
 	key="${key//$'\n'/}"
 	if [[ -n "$key" ]]; then
-		./scripts/sync-agent-key.sh >/dev/null 2>&1 || true
+		DASHBOARD_DB_PATH="$DASHBOARD_DB" CONTROLLER_ENV_FILE="$DEV_CONTROLLER_ENV" \
+			./scripts/sync-agent-key.sh >/dev/null 2>&1 || true
 	fi
 fi
 
@@ -106,17 +144,29 @@ export PATH="/usr/local/go/bin:${PATH:-}"
 echo "[*] Starting controller API on :$CONTROLLER_PORT..."
 (
 	set -a
-	if [[ -f "$ROOT/.env.controller" ]]; then
-		# shellcheck source=/dev/null
-		. "$ROOT/.env.controller"
-	fi
+	# shellcheck source=/dev/null
+	. "$DEV_CONTROLLER_ENV"
 	set +a
-	API_PORT="$CONTROLLER_PORT" "$CONTROLLER_BIN"
+	TRINITY_DEV=1 \
+		TRINITY_ENV=development \
+		API_PORT="$CONTROLLER_PORT" \
+		DB_PATH="$DB_PATH" \
+		CONTROLLER_URL="$CONTROLLER_URL" \
+		"$CONTROLLER_BIN"
 ) >>"$CONTROLLER_LOG" 2>&1 &
 echo $! >"$CONTROLLER_PID_FILE"
 
 echo "[*] Starting dashboard API on :$DASHBOARD_PORT..."
-DASHBOARD_PORT="$DASHBOARD_PORT" "$DASHBOARD_BIN" >>"$API_LOG" 2>&1 &
+TRINITY_DEV=1 \
+	TRINITY_ENV=development \
+	DASHBOARD_PORT="$DASHBOARD_PORT" \
+	DASHBOARD_DB_PATH="$DASHBOARD_DB" \
+	DB_PATH="$DB_PATH" \
+	CONTROLLER_URL="$CONTROLLER_URL" \
+	TRINITY_AGENT_KEY="$TRINITY_AGENT_KEY" \
+	TRINITY_CONTROLLER_ENV_PATH="/dev/null" \
+	TRINITY_CADDY_SITE_PATH="/dev/null" \
+	"$DASHBOARD_BIN" >>"$API_LOG" 2>&1 &
 echo $! >"$API_PID_FILE"
 
 echo "[*] Starting dashboard UI on :$VITE_PORT..."
@@ -124,7 +174,13 @@ echo "[*] Starting dashboard UI on :$VITE_PORT..."
 	cd "$ROOT/web/dashboard"
 	VITE_DEV_PORT="$VITE_PORT" npm run dev >>"$VITE_LOG" 2>&1 &
 	echo $! >"$VITE_PID_FILE"
-)
+) &
+VITE_WRAPPER_PID=$!
+
+for _i in $(seq 1 30); do
+	[[ -f "$VITE_PID_FILE" ]] && break
+	sleep 0.1
+done
 
 wait_for_port() {
 	local port=$1
@@ -139,6 +195,9 @@ wait_for_port() {
 	done
 	echo "[-] $label failed to start on :$port"
 	echo "    Check log: $log"
+	if [[ -f "$log" ]]; then
+		tail -20 "$log" 2>/dev/null || true
+	fi
 	exit 1
 }
 
@@ -148,7 +207,8 @@ wait_for_port "$VITE_PORT" "Dashboard UI" "$VITE_LOG"
 
 echo ""
 echo "============================================"
-echo "  TrinityProxy is ready"
+echo "  TrinityProxy LOCAL DEV is ready"
+echo "  (not connected to production VPS)"
 echo "============================================"
 echo ""
 echo "  Dashboard:   http://localhost:$VITE_PORT"
@@ -157,8 +217,7 @@ echo ""
 echo "  First time?"
 echo "    1. Log in with the credentials above (if shown)"
 echo "    2. Change your password when prompted"
-echo "    3. Settings — enter your domain and click Save"
-echo "    4. Deploy Agent — copy the install command to your VPS"
+echo "    3. Settings — use localhost for dev (not your VPS domain)"
 echo ""
 echo "  macOS agent dev: make run-agent-dev  (embedded SOCKS :1080)"
 echo ""
@@ -166,6 +225,17 @@ echo "  Press Ctrl+C to stop."
 echo "  Or run 'make stop' from another terminal."
 echo ""
 
-wait "$(cat "$CONTROLLER_PID_FILE")" 2>/dev/null || true
-wait "$(cat "$API_PID_FILE")" 2>/dev/null || true
-wait "$(cat "$VITE_PID_FILE")" 2>/dev/null || true
+dev_server_alive() {
+	local pid=$1
+	kill -0 "$pid" 2>/dev/null
+}
+
+# macOS bash `wait` on PIDs from nested subshells is unreliable — poll instead.
+while dev_server_alive "$(cat "$CONTROLLER_PID_FILE")" \
+	&& dev_server_alive "$(cat "$API_PID_FILE")" \
+	&& dev_server_alive "$(cat "$VITE_PID_FILE")"; do
+	sleep 2
+done
+
+echo "[!] A dev server exited unexpectedly — check logs in $PID_DIR/"
+exit 1

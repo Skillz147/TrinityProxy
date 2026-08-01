@@ -15,6 +15,14 @@ cd "$ROOT"
 
 # macOS / local dev — delegate to dev stack
 if [[ "$(uname -s)" == "Darwin" ]]; then
+	if [[ $EUID -eq 0 ]]; then
+		echo "[-] Error: do not use 'sudo make start' on macOS."
+		echo "    Local dev:  make start-dev   (or make start — same thing on macOS)"
+		echo "    Production: ssh to your Linux VPS and run 'sudo make start' there."
+		exit 1
+	fi
+	echo "[*] macOS detected — starting LOCAL DEV stack (not production VPS bootstrap)."
+	echo "[*] Use 'make start-dev' explicitly if you prefer."
 	exec "$ROOT/scripts/start-dashboard-dev.sh"
 fi
 

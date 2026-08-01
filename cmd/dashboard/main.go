@@ -101,7 +101,11 @@ func main() {
 	}
 	defer deployStore.Close()
 
-	if result, err := deployStore.SyncFromExternal(deploymentSyncOptions(false)); err != nil {
+	if isDevMode() {
+		log.Info("dev mode: skipping external deployment sync (local-only)",
+			"controller_url", cfg.ControllerURL,
+		)
+	} else if result, err := deployStore.SyncFromExternal(deploymentSyncOptions(false)); err != nil {
 		log.Warn("deployment settings sync skipped", "err", err)
 	} else if result.Updated {
 		log.Info("deployment settings synced from host config",
@@ -256,6 +260,14 @@ func registerStaticUI(mux *http.ServeMux, staticDir string, log *slog.Logger) {
 
 
 
+
+func isDevMode() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("TRINITY_ENV"))) {
+	case "development", "dev":
+		return true
+	}
+	return strings.TrimSpace(os.Getenv("TRINITY_DEV")) == "1"
+}
 
 func deploymentSyncOptions(force bool) deployment.SyncOptions {
 	return deployment.SyncOptions{
