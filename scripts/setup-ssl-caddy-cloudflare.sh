@@ -139,6 +139,54 @@ install_caddy() {
     fi
 }
 
+
+ensure_caddy_package() {
+    if ! command -v caddy >/dev/null 2>&1; then
+        install_caddy
+    fi
+    if ! command -v caddy >/dev/null 2>&1; then
+        echo "[!] Caddy binary not found after install attempt"
+        exit 1
+    fi
+    if ! systemctl list-unit-files caddy.service >/dev/null 2>&1; then
+        echo "[!] caddy.service unit not found — reinstall the caddy package"
+        exit 1
+    fi
+}
+
+ensure_caddy_runtime_dirs() {
+    echo "[*] Ensuring Caddy data and config directories..."
+    install -d -m 755 /etc/caddy
+    install -d -m 755 /var/lib/caddy
+    if id caddy >/dev/null 2>&1; then
+        chown -R caddy:caddy /var/lib/caddy 2>/dev/null || true
+    fi
+}
+
+print_caddy_service_diagnostics() {
+    echo ""
+    echo "[!] caddy.service failed — recent journal entries:"
+    journalctl -xeu caddy.service -n 30 --no-pager 2>/dev/null || journalctl -u caddy.service -n 30 --no-pager 2>/dev/null || true
+    echo ""
+    if command -v ss >/dev/null 2>&1; then
+        if ss -tlnH 2>/dev/null | grep -qE ':80 |:443 '; then
+            echo "[!] Something is already listening on port 80 and/or 443:"
+            ss -tlnp 2>/dev/null | grep -E ':80 |:443 ' || true
+            echo "    Stop the conflicting service (e.g. nginx, apache2) or free the ports."
+        fi
+    fi
+    mention_cloud_firewall_hint
+}
+
+mention_cloud_firewall_hint() {
+    if curl -sf -m 2 -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/id >/dev/null 2>&1; then
+        echo ""
+        echo "[*] GCP VM detected: open TCP 80 and 443 on the VPC firewall / network tags"
+        echo "    (e.g. gcloud compute firewall-rules create ... --allow=tcp:80,tcp:443)"
+        echo "    Cloudflare orange-cloud still needs origin ports 80/443 reachable for HTTPS."
+    fi
+}
+
 ensure_cloudflare_dns_module() {
     if caddy list-modules 2>/dev/null | grep -q 'dns.providers.cloudflare'; then
         echo "[*] Caddy Cloudflare DNS module already present"
@@ -146,7 +194,17 @@ ensure_cloudflare_dns_module() {
     fi
 
     echo "[*] Adding Caddy Cloudflare DNS module (required for DNS-01 wildcard)..."
-    caddy add-package github.com/caddy-dns/cloudflare
+    systemctl stop caddy 2>/dev/null || true
+    if ! caddy add-package github.com/caddy-dns/cloudflare; then
+        echo "[!] Failed to install Caddy Cloudflare DNS module (github.com/caddy-dns/cloudflare)"
+        echo "    Check network access and retry, or use a Caddy build that includes the plugin."
+        exit 1
+    fi
+    systemctl daemon-reload
+    if ! caddy list-modules 2>/dev/null | grep -q 'dns.providers.cloudflare'; then
+        echo "[!] Cloudflare DNS module still missing after add-package"
+        exit 1
+    fi
 }
 
 write_cloudflare_env() {
@@ -223,12 +281,40 @@ EOF
 }
 
 enable_caddy() {
-    echo "[*] Validating Caddy configuration..."
-    caddy validate --config "$CADDYFILE"
+    ensure_caddy_runtime_dirs
 
-    echo "[*] Enabling and reloading Caddy..."
+    if [[ -f "$CADDY_ENV" ]]; then
+        set -a
+        # shellcheck disable=SC1090
+        source "$CADDY_ENV"
+        set +a
+    fi
+
+    echo "[*] Validating Caddy configuration..."
+    if ! caddy validate --config "$CADDYFILE"; then
+        echo "[!] Caddy configuration validation failed"
+        exit 1
+    fi
+
+    systemctl daemon-reload
+    echo "[*] Enabling and starting Caddy..."
     systemctl enable caddy
-    systemctl reload caddy 2>/dev/null || systemctl restart caddy
+
+    if systemctl is-active --quiet caddy 2>/dev/null; then
+        if systemctl reload caddy; then
+            echo "[*] Caddy reloaded"
+            return 0
+        fi
+        echo "[*] Reload failed — attempting restart..."
+    fi
+
+    if systemctl restart caddy; then
+        echo "[*] Caddy started"
+        return 0
+    fi
+
+    print_caddy_service_diagnostics
+    exit 1
 }
 
 main() {
@@ -243,11 +329,12 @@ main() {
     print_dns_checklist
     wait_for_dns_ready
 
-    install_caddy
+    ensure_caddy_package
     ensure_cloudflare_dns_module
     write_cloudflare_env
     configure_systemd_env
     open_firewall_ports
+    mention_cloud_firewall_hint
     write_global_caddyfile
     write_site_config
     enable_caddy

@@ -145,6 +145,47 @@ install_caddy() {
     fi
 }
 
+
+ensure_caddy_package() {
+    if ! command -v caddy >/dev/null 2>&1; then
+        install_caddy
+    fi
+    if ! command -v caddy >/dev/null 2>&1; then
+        echo "[!] Caddy binary not found after install attempt"
+        exit 1
+    fi
+    if ! systemctl list-unit-files caddy.service >/dev/null 2>&1; then
+        echo "[!] caddy.service unit not found — reinstall the caddy package"
+        exit 1
+    fi
+}
+
+ensure_caddy_runtime_dirs() {
+    echo "[*] Ensuring Caddy data and config directories..."
+    install -d -m 755 /etc/caddy
+    install -d -m 755 /var/lib/caddy
+    if id caddy >/dev/null 2>&1; then
+        chown -R caddy:caddy /var/lib/caddy 2>/dev/null || true
+    fi
+}
+
+print_caddy_service_diagnostics() {
+    echo ""
+    echo "[!] caddy.service failed — recent journal entries:"
+    journalctl -xeu caddy.service -n 30 --no-pager 2>/dev/null || journalctl -u caddy.service -n 30 --no-pager 2>/dev/null || true
+    echo ""
+    if command -v ss >/dev/null 2>&1; then
+        if ss -tlnH 2>/dev/null | grep -qE ':80 |:443 '; then
+            echo "[!] Something is already listening on port 80 and/or 443:"
+            ss -tlnp 2>/dev/null | grep -E ':80 |:443 ' || true
+        fi
+    fi
+    if curl -sf -m 2 -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/id >/dev/null 2>&1; then
+        echo ""
+        echo "[*] GCP VM: ensure VPC firewall allows tcp:80 and tcp:443 to this instance."
+    fi
+}
+
 open_firewall_ports() {
     if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qi active; then
         echo "[*] Opening HTTP/HTTPS in ufw..."
@@ -193,12 +234,33 @@ EOF
 }
 
 enable_caddy() {
-    echo "[*] Validating Caddy configuration..."
-    caddy validate --config "$CADDYFILE"
+    ensure_caddy_runtime_dirs
 
-    echo "[*] Enabling and reloading Caddy..."
+    echo "[*] Validating Caddy configuration..."
+    if ! caddy validate --config "$CADDYFILE"; then
+        echo "[!] Caddy configuration validation failed"
+        exit 1
+    fi
+
+    systemctl daemon-reload
+    echo "[*] Enabling and starting Caddy..."
     systemctl enable caddy
-    systemctl reload caddy 2>/dev/null || systemctl restart caddy
+
+    if systemctl is-active --quiet caddy 2>/dev/null; then
+        if systemctl reload caddy; then
+            echo "[*] Caddy reloaded"
+            return 0
+        fi
+        echo "[*] Reload failed — attempting restart..."
+    fi
+
+    if systemctl restart caddy; then
+        echo "[*] Caddy started"
+        return 0
+    fi
+
+    print_caddy_service_diagnostics
+    exit 1
 }
 
 main() {
@@ -213,7 +275,7 @@ main() {
     print_dns_checklist
     wait_for_dns_ready
 
-    install_caddy
+    ensure_caddy_package
     open_firewall_ports
     write_global_caddyfile
     write_site_config
