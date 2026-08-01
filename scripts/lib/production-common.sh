@@ -51,42 +51,39 @@ production_install_scripts() {
 		echo "[*] Installing $name -> $OPT_SCRIPTS_DIR/$name"
 		production_install -o root -g root -m 755 "$src" "$OPT_SCRIPTS_DIR/$name"
 	done
-	production_install_ssl_sudoers
+	production_install_ssl_provision "$project_root"
 }
 
-production_install_ssl_sudoers() {
-	local dropin="/etc/sudoers.d/trinityproxy-ssl"
-	if [[ -f "$dropin" ]]; then
-		echo "[*] sudoers drop-in already exists: $dropin"
-		return 0
+production_install_ssl_provision() {
+	local project_root="$1"
+	local obsolete_sudoers="/etc/sudoers.d/trinityproxy-ssl"
+	if [[ -f "$obsolete_sudoers" ]]; then
+		echo "[*] Removing obsolete sudoers drop-in (incompatible with NoNewPrivileges): $obsolete_sudoers"
+		rm -f "$obsolete_sudoers"
 	fi
-	local visudo_bin
-	visudo_bin="$(production_resolve_cmd visudo 2>/dev/null || true)"
-	if [[ -z "$visudo_bin" ]]; then
-		echo "[!] visudo not found — skipping sudoers for dashboard SSL provision" >&2
-		echo "    Allow NOPASSWD for: $SSL_SETUP_SCRIPT" >&2
-		return 0
+
+	local tmpfiles_src="$project_root/scripts/trinityproxy-ssl-provision.tmpfiles.conf"
+	if [[ -f "$tmpfiles_src" ]]; then
+		echo "[*] Installing tmpfiles for /run/trinityproxy"
+		production_install -o root -g root -m 644 "$tmpfiles_src" /etc/tmpfiles.d/trinityproxy-ssl-provision.conf
+		if command -v systemd-tmpfiles >/dev/null 2>&1; then
+			systemd-tmpfiles --create /etc/tmpfiles.d/trinityproxy-ssl-provision.conf 2>/dev/null || true
+		fi
 	fi
-	echo "[*] Installing sudoers drop-in for dashboard SSL provision..."
-	local tmp
-	tmp="$(mktemp)"
-	cat >"$tmp" <<EOF
-# TrinityProxy dashboard SSL provisioning (managed by production_install_scripts)
-Defaults:trinityproxy env_keep += "PUBLIC_DOMAIN"
-Defaults:trinityproxy env_keep += "EMAIL"
-Defaults:trinityproxy env_keep += "SERVER_IP"
-Defaults:trinityproxy env_keep += "CLOUDFLARE_API_TOKEN"
-Defaults:trinityproxy env_keep += "SKIP_DNS_WAIT"
-trinityproxy ALL=(root) NOPASSWD: $SSL_SETUP_SCRIPT
-EOF
-	chmod 440 "$tmp"
-	if ! "$visudo_bin" -cf "$tmp"; then
-		rm -f "$tmp"
-		echo "[-] visudo rejected sudoers fragment" >&2
+
+	local unit_src="$project_root/scripts/trinityproxy-ssl-provision.service"
+	if [[ ! -f "$unit_src" ]]; then
+		echo "[-] Missing unit: $unit_src" >&2
 		return 1
 	fi
-	production_install -o root -g root -m 440 "$tmp" "$dropin"
-	rm -f "$tmp"
+	echo "[*] Installing systemd oneshot: trinityproxy-ssl-provision.service"
+	production_install_systemd_unit "$unit_src" 		/etc/systemd/system/trinityproxy-ssl-provision.service "$project_root"
+
+	local polkit_src="$project_root/scripts/trinityproxy-ssl-provision.polkit.rules"
+	if [[ -f "$polkit_src" ]]; then
+		echo "[*] Installing polkit rule for dashboard SSL provision (systemctl, no sudo)"
+		production_install -o root -g root -m 644 "$polkit_src" 			/etc/polkit-1/rules.d/50-trinityproxy-ssl-provision.rules
+	fi
 }
 
 production_install_systemd_unit() {

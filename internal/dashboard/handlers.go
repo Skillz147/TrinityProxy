@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"os/exec"
 	"strings"
 
 	"github.com/Skillz147/TrinityProxy/internal/api"
@@ -414,34 +413,23 @@ func (s *Server) handleProvisionSSL(w http.ResponseWriter, r *http.Request) {
 	email := "ssl@" + normalized
 	serverIP := s.serverPublicIP(r)
 
-	scriptPath, err := resolveSSLScript(sslScriptCloudflare)
+	s.log.Info("starting Cloudflare SSL provision unit", "domain", normalized, "email", email, "ip", serverIP)
+	out, err := runSSLProvision(r.Context(), sslProvisionParams{
+		Domain:             normalized,
+		Email:              email,
+		ServerIP:           serverIP,
+		CloudflareAPIToken: req.CloudflareAPIToken,
+	})
 	if err != nil {
-		s.log.Error("setup script not found", "err", err)
-		writeJSONError(w, http.StatusInternalServerError, "SSL setup script not found")
-		return
-	}
-
-	cmd := exec.Command("sudo", "-E", scriptPath)
-	cmd.Env = append(os.Environ(),
-		"PUBLIC_DOMAIN="+normalized,
-		"EMAIL="+email,
-		"SERVER_IP="+serverIP,
-		"CLOUDFLARE_API_TOKEN="+req.CloudflareAPIToken,
-		"SKIP_DNS_WAIT=1",
-	)
-
-	s.log.Info("running Cloudflare SSL provision script", "domain", normalized, "email", email, "ip", serverIP)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		s.log.Error("SSL provisioning failed", "err", err, "output", string(out))
-		writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("SSL provisioning failed: %v\nOutput:\n%s", err, string(out)))
+		s.log.Error("SSL provisioning failed", "err", err, "output", out)
+		writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("SSL provisioning failed: %v\nOutput:\n%s", err, out))
 		return
 	}
 
 	s.log.Info("SSL provisioning succeeded", "domain", normalized)
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status": "success",
-		"output": string(out),
+		"output": out,
 	})
 }
 

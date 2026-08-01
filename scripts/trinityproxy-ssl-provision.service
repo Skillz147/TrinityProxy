@@ -1,0 +1,14 @@
+[Unit]
+Description=TrinityProxy SSL provisioning (Caddy + Cloudflare DNS-01)
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/run/trinityproxy/ssl-provision.env
+
+[Service]
+Type=oneshot
+User=root
+EnvironmentFile=-/run/trinityproxy/ssl-provision.env
+ExecStart=/opt/trinityproxy/scripts/setup-ssl-caddy-cloudflare.sh
+StandardOutput=journal
+StandardError=journal
+

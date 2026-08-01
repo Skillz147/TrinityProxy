@@ -24,7 +24,10 @@ StandardError=journal
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
+RuntimeDirectory=trinityproxy
+RuntimeDirectoryMode=0750
 ReadWritePaths=/var/lib/trinityproxy
+ReadWritePaths=/run/trinityproxy
 ReadOnlyPaths=/opt/trinityproxy/bin
 ReadOnlyPaths=/opt/trinityproxy/scripts
 
