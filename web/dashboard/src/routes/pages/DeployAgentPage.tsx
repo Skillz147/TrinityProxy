@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   Box,
@@ -29,6 +29,7 @@ import {
   ApiError,
   fetchDeployCommands,
   type DeployCommandsResponse,
+  type DeployLogLevel,
   type DeployPlatform,
   type RemoteCommand,
   type SSLMode,
@@ -49,6 +50,43 @@ const DEFAULT_PLATFORM: Record<DeployEnvironment, string> = {
 };
 
 const DEFAULT_OPERATION = "install";
+
+const LOG_LEVEL_OPTIONS: {
+  id: DeployLogLevel;
+  label: string;
+  description: string;
+}[] = [
+  {
+    id: "quiet",
+    label: "Quiet",
+    description: "Total silent — no installer output",
+  },
+  {
+    id: "silent",
+    label: "Silent",
+    description: "Errors only, minimal output",
+  },
+  {
+    id: "info",
+    label: "Info",
+    description: "Normal progress messages (default)",
+  },
+  {
+    id: "debug",
+    label: "Debug",
+    description: "Verbose output for troubleshooting",
+  },
+];
+
+const LOG_LEVEL_PLATFORMS = new Set(["linux-vps", "macos", "windows"]);
+const LOG_LEVEL_OPERATIONS = new Set(["install", "repair"]);
+
+function supportsLogLevel(platformId: string, operationId: string): boolean {
+  return (
+    LOG_LEVEL_PLATFORMS.has(platformId) &&
+    LOG_LEVEL_OPERATIONS.has(operationId)
+  );
+}
 
 const OPERATION_ICONS: Record<string, typeof Rocket> = {
   install: Rocket,
@@ -111,15 +149,19 @@ export function DeployAgentPage() {
   const [selectedEnv, setSelectedEnv] = useState<DeployEnvironment>("prod");
   const [selectedId, setSelectedId] = useState<string>("linux-vps");
   const [selectedOpId, setSelectedOpId] = useState<string>(DEFAULT_OPERATION);
+  const [logLevel, setLogLevel] = useState<DeployLogLevel>("info");
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const isFirstLoad = useRef(true);
 
   const loadCommands = useCallback(async () => {
-    setIsLoading(true);
+    if (isFirstLoad.current) {
+      setIsLoading(true);
+    }
     setError(null);
     try {
-      const response = await fetchDeployCommands(token);
+      const response = await fetchDeployCommands(token, logLevel);
       setData(response);
       setSelectedId((current) => {
         const id = response.platforms.some((p) => p.id === current)
@@ -137,8 +179,9 @@ export function DeployAgentPage() {
       setData(null);
     } finally {
       setIsLoading(false);
+      isFirstLoad.current = false;
     }
-  }, [token]);
+  }, [token, logLevel]);
 
   useEffect(() => {
     void loadCommands();
@@ -152,6 +195,12 @@ export function DeployAgentPage() {
     : [];
   const selectedOperation =
     operations.find((op) => op.id === selectedOpId) ?? operations[0];
+  const showLogLevel =
+    selectedPlatform &&
+    selectedOperation &&
+    supportsLogLevel(selectedPlatform.id, selectedOperation.id);
+  const displayCommand =
+    selectedOperation?.command ?? selectedPlatform?.command ?? "";
 
   function handlePlatformChange(id: string) {
     setSelectedId(id);
@@ -448,6 +497,35 @@ export function DeployAgentPage() {
                     </div>
                   )}
 
+                  {showLogLevel && (
+                    <div className="space-y-3">
+                      <Label className="text-muted-foreground uppercase text-xs font-semibold tracking-wider">
+                        Install Log Level
+                      </Label>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full">
+                        {LOG_LEVEL_OPTIONS.map((option) => (
+                          <Button
+                            key={option.id}
+                            variant={
+                              logLevel === option.id ? "primary" : "outline"
+                            }
+                            onClick={() => setLogLevel(option.id)}
+                            className={cn(
+                              "h-auto min-h-10 flex-col items-start gap-0.5 px-3 py-2 text-left transition-all duration-200",
+                              logLevel !== option.id &&
+                                "text-muted-foreground hover:border-primary/50",
+                            )}
+                          >
+                            <span className="font-medium">{option.label}</span>
+                            <span className="text-xs font-normal opacity-80">
+                              {option.description}
+                            </span>
+                          </Button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="space-y-3">
                     <div className="flex items-center justify-between gap-2">
                       <Label className="text-sm font-semibold">
@@ -456,13 +534,9 @@ export function DeployAgentPage() {
                       <Button
                         variant="secondary"
                         size="sm"
-                        onClick={() =>
-                          void handleCopy(
-                            selectedOperation?.command ??
-                              selectedPlatform.command,
-                          )
-                        }
+                        onClick={() => void handleCopy(displayCommand)}
                         className="h-8"
+                        disabled={!displayCommand}
                       >
                         {copied ? (
                           <>
@@ -479,10 +553,7 @@ export function DeployAgentPage() {
                     </div>
                     <div className="group relative">
                       <pre className="overflow-x-auto rounded-lg border border-border bg-zinc-950 p-4 text-xs leading-relaxed text-zinc-50 shadow-inner">
-                        <code>
-                          {selectedOperation?.command ??
-                            selectedPlatform.command}
-                        </code>
+                        <code>{displayCommand}</code>
                       </pre>
                     </div>
                   </div>

@@ -107,6 +107,8 @@ export interface DeployPlatform {
   operations?: RemoteCommand[];
 }
 
+export type DeployLogLevel = "quiet" | "silent" | "info" | "debug";
+
 export interface DeployCommandsResponse {
   has_agent_key: boolean;
   ssl_mode: SSLMode;
@@ -272,8 +274,10 @@ export function fetchBootstrapScript(
 
 export function fetchDeployCommands(
   token: string | null,
+  logLevel: DeployLogLevel = "info",
 ): Promise<DeployCommandsResponse> {
-  return apiFetch("/dashboard/deploy-commands", token);
+  const params = new URLSearchParams({ logLevel });
+  return apiFetch(`/dashboard/deploy-commands?${params.toString()}`, token);
 }
 
 export function fetchDeployment(token: string | null): Promise<DeploymentConfig> {

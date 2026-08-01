@@ -12,7 +12,7 @@ func TestBuildDeployCommands(t *testing.T) {
 		SSLMode:             SSLModeDevMkcert,
 	}
 
-	commands := BuildDeployCommands(settings, "", "test-agent-key-hex")
+	commands := BuildDeployCommands(settings, "", "test-agent-key-hex", DefaultLogLevel)
 
 	if commands.ProductionControllerURL != "https://api.trinityproxy.local" {
 		t.Errorf("production URL = %q, want https://api.trinityproxy.local", commands.ProductionControllerURL)
@@ -58,7 +58,7 @@ func TestBuildDeployCommandsVPSIPMode(t *testing.T) {
 		SSLMode:      SSLModeNone,
 	}
 
-	commands := BuildDeployCommands(settings, "", "key")
+	commands := BuildDeployCommands(settings, "", "key", DefaultLogLevel)
 
 	want := "http://api.203.0.113.10:3100"
 	if commands.ProductionControllerURL != want {
@@ -80,7 +80,7 @@ func TestWindowsBootstrapOneLiner(t *testing.T) {
 		PublicDomain: "example.com",
 		SSLMode:      SSLModeCaddy,
 	}
-	commands := BuildDeployCommands(settings, "", "secret-key-abc")
+	commands := BuildDeployCommands(settings, "", "secret-key-abc", DefaultLogLevel)
 	win := findPlatform(commands.Platforms, "windows")
 	if win.ID != "windows" {
 		t.Fatalf("windows platform missing")
@@ -106,14 +106,14 @@ func TestWindowsBootstrapOneLiner(t *testing.T) {
 	if !strings.Contains(win.Command, commands.ProductionControllerURL) {
 		t.Errorf("windows command missing controller URL")
 	}
-	one := windowsBootstrapOneLiner(commands.ProductionControllerURL, "secret-key-abc")
+	one := windowsBootstrapOneLiner(commands.ProductionControllerURL, "secret-key-abc", DefaultLogLevel)
 	if strings.Contains(one, "\n") {
 		t.Errorf("bootstrap one-liner should be a single line")
 	}
 }
 
 func TestWindowsBootstrapOneLinerNoKey(t *testing.T) {
-	line := windowsBootstrapOneLiner("https://api.example.com", "")
+	line := windowsBootstrapOneLiner("https://api.example.com", "", DefaultLogLevel)
 	if strings.Contains(line, "TRINITY_AGENT_KEY") {
 		t.Errorf("no-key one-liner should not set TRINITY_AGENT_KEY")
 	}
@@ -162,7 +162,7 @@ func TestPlatformOperations(t *testing.T) {
 		PublicDomain: "example.com",
 		SSLMode:      SSLModeCaddy,
 	}
-	commands := BuildDeployCommands(settings, "", "test-key")
+	commands := BuildDeployCommands(settings, "", "test-key", DefaultLogLevel)
 
 	win := findPlatform(commands.Platforms, "windows")
 	if len(win.Operations) != 4 {
@@ -185,5 +185,65 @@ func TestPlatformOperations(t *testing.T) {
 	}
 	if linux.Operations[0].ID != "install" {
 		t.Errorf("first linux op = %q, want install", linux.Operations[0].ID)
+	}
+}
+
+func TestBuildDeployCommandsLogLevel(t *testing.T) {
+	settings := &Settings{
+		PublicDomain: "example.com",
+		SSLMode:      SSLModeCaddy,
+	}
+
+	commands := BuildDeployCommands(settings, "", "test-key", "silent")
+
+	linux := findPlatform(commands.Platforms, "linux-vps")
+	if !strings.Contains(linux.Command, "TRINITY_LOG_LEVEL=silent") {
+		t.Errorf("linux command missing silent log level: %q", linux.Command)
+	}
+	if strings.Contains(linux.Operations[1].Command, "TRINITY_LOG_LEVEL") {
+		t.Errorf("linux remove command should not include TRINITY_LOG_LEVEL")
+	}
+
+	macos := findPlatform(commands.Platforms, "macos")
+	if !strings.Contains(macos.Operations[0].Command, "TRINITY_LOG_LEVEL=silent") {
+		t.Errorf("macos install missing silent log level")
+	}
+
+	win := findPlatform(commands.Platforms, "windows")
+	if !strings.Contains(win.Operations[0].Command, "$env:TRINITY_LOG_LEVEL='silent'") {
+		t.Errorf("windows install missing silent log level: %q", win.Operations[0].Command)
+	}
+	if strings.Contains(win.Operations[1].Command, "TRINITY_LOG_LEVEL") {
+		t.Errorf("windows remove command should not include TRINITY_LOG_LEVEL")
+	}
+
+	debug := BuildDeployCommands(settings, "", "test-key", "debug")
+	linuxDebug := findPlatform(debug.Platforms, "linux-vps")
+	if !strings.Contains(linuxDebug.Command, "TRINITY_LOG_LEVEL=debug") {
+		t.Errorf("linux command missing debug log level")
+	}
+
+	invalid := BuildDeployCommands(settings, "", "test-key", "verbose")
+	linuxDefault := findPlatform(invalid.Platforms, "linux-vps")
+	if !strings.Contains(linuxDefault.Command, "TRINITY_LOG_LEVEL=info") {
+		t.Errorf("invalid log level should default to info")
+	}
+}
+
+func TestNormalizeLogLevel(t *testing.T) {
+	tests := []struct {
+		in, want string
+	}{
+		{"", DefaultLogLevel},
+		{"INFO", "info"},
+		{" silent ", "silent"},
+		{"quiet", "quiet"},
+		{"debug", "debug"},
+		{"invalid", DefaultLogLevel},
+	}
+	for _, tc := range tests {
+		if got := NormalizeLogLevel(tc.in); got != tc.want {
+			t.Errorf("NormalizeLogLevel(%q) = %q, want %q", tc.in, got, tc.want)
+		}
 	}
 }

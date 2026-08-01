@@ -299,7 +299,7 @@ func (s *Server) handleDeployCommands(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	commands := deployment.BuildDeployCommands(settings, s.cfg.ControllerURL, agentKey)
+	commands := deployment.BuildDeployCommands(settings, s.cfg.ControllerURL, agentKey, r.URL.Query().Get("logLevel"))
 	writeJSON(w, http.StatusOK, commands)
 }
 
