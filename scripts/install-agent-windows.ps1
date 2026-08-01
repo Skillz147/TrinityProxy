@@ -20,7 +20,7 @@
     TRINITY_INSTALL_DIR=C:\Program Files\TrinityProxy  Override install folder
 
   Paste-and-run: use the one-liner from the dashboard Deploy Agent page (elevated PowerShell).
-  Paste-and-run downloads this script from GitHub, extracts the repo to %TEMP%\TrinityProxy (no Git), then builds with Go if needed or uses a GitHub Release binary.
+  Paste-and-run downloads this script from GitHub, pulls trinityproxy-windows-amd64.exe from the latest GitHub Release (no Go), or falls back to a fresh main.zip extract under %TEMP%\TrinityProxy for local Go build.
 
   Run in an elevated PowerShell (Run as administrator).
 
@@ -51,6 +51,10 @@ $ServiceDisplayName = "TrinityProxy Agent"
 $BinaryName = "trinityproxy.exe"
 $WrapperName = "start-agent.cmd"
 $DefaultSocksPort = 1080
+# Bump when bootstrap cache under %TEMP%\TrinityProxy must be refreshed.
+$ScriptVersion = "3"
+$DefaultReleaseBinaryUrl = "https://github.com/Skillz147/TrinityProxy/releases/download/latest/trinityproxy-windows-amd64.exe"
+
 
 function Write-Step([string]$Message) {
     Write-Host ""
@@ -88,12 +92,33 @@ function Test-InRepoScriptsDir {
     return (Test-Path -LiteralPath (Join-Path $repoRoot "go.mod"))
 }
 
+function Get-DefaultDownloadUrl {
+    if ($env:TRINITY_DOWNLOAD_URL) {
+        return $env:TRINITY_DOWNLOAD_URL.Trim()
+    }
+    if ($DownloadUrl) {
+        return $DownloadUrl.Trim()
+    }
+    return $DefaultReleaseBinaryUrl
+}
+
 function Try-Get-GitHubReleaseBinaryUrl {
     $repo = if ($env:TRINITY_GITHUB_REPO) { $env:TRINITY_GITHUB_REPO.Trim() } else { "Skillz147/TrinityProxy" }
+    $preferred = @(
+        "trinityproxy-windows-amd64.exe",
+        "trinityproxy.exe"
+    )
     try {
         $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases/latest" -Headers @{ "User-Agent" = "TrinityProxy-Installer" } -UseBasicParsing
+        foreach ($name in $preferred) {
+            foreach ($asset in $release.assets) {
+                if ($asset.name -ieq $name) {
+                    return $asset.browser_download_url
+                }
+            }
+        }
         foreach ($asset in $release.assets) {
-            if ($asset.name -match '(?i)trinityproxy.*\.exe$') {
+            if ($asset.name -match '(?i)^trinityproxy.*\.exe$') {
                 return $asset.browser_download_url
             }
         }
@@ -104,15 +129,38 @@ function Try-Get-GitHubReleaseBinaryUrl {
     return $null
 }
 
+function Test-BootstrapCacheCurrent {
+    param([string]$CloneDir)
+    $installer = Join-Path $CloneDir "scripts\install-agent-windows.ps1"
+    $versionFile = Join-Path $CloneDir ".install-script-version"
+    if (-not (Test-Path -LiteralPath $installer)) { return $false }
+    if (-not (Test-Path -LiteralPath $versionFile)) { return $false }
+    try {
+        $cached = (Get-Content -LiteralPath $versionFile -Raw -ErrorAction Stop).Trim()
+        return ($cached -eq $ScriptVersion)
+    }
+    catch {
+        return $false
+    }
+}
+
 function Invoke-BootstrapRepoAndReenter {
     $branch = if ($env:TRINITY_REPO_BRANCH) { $env:TRINITY_REPO_BRANCH.Trim() } else { "main" }
     $zipURL = if ($env:TRINITY_REPO_ZIP_URL) { $env:TRINITY_REPO_ZIP_URL.Trim() } else { "https://github.com/Skillz147/TrinityProxy/archive/refs/heads/$branch.zip" }
     $cloneDir = Join-Path $env:TEMP "TrinityProxy"
     $installer = Join-Path $cloneDir "scripts\install-agent-windows.ps1"
 
-    Write-Step "Preparing TrinityProxy installer (one-time download)..."
-    if (-not (Test-Path -LiteralPath $installer)) {
+    Write-Step "Preparing TrinityProxy installer (source download for Go build fallback)..."
+    if (-not (Test-BootstrapCacheCurrent -CloneDir $cloneDir)) {
+        if (Test-Path -LiteralPath $cloneDir) {
+            Write-Warn "Removing stale %TEMP%\TrinityProxy (installer script version $ScriptVersion required)."
+            Remove-Item -LiteralPath $cloneDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+
         $zipFile = Join-Path $env:TEMP "TrinityProxy-src.zip"
+        if (Test-Path -LiteralPath $zipFile) {
+            Remove-Item -LiteralPath $zipFile -Force -ErrorAction SilentlyContinue
+        }
         Write-Host "   Downloading: $zipURL"
         Invoke-WebRequest -Uri $zipURL -OutFile $zipFile -UseBasicParsing
         if (-not (Test-Path -LiteralPath $zipFile)) {
@@ -133,12 +181,13 @@ function Invoke-BootstrapRepoAndReenter {
             exit 1
         }
 
-        if (Test-Path -LiteralPath $cloneDir) {
-            Remove-Item -LiteralPath $cloneDir -Recurse -Force
-        }
+        New-Item -ItemType Directory -Path (Split-Path -Parent $cloneDir) -Force | Out-Null
         Move-Item -LiteralPath $extracted.FullName -Destination $cloneDir
+        Set-Content -LiteralPath (Join-Path $cloneDir ".install-script-version") -Value $ScriptVersion -Encoding ASCII -NoNewline
         Remove-Item -LiteralPath $extractRoot -Recurse -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $zipFile -Force -ErrorAction SilentlyContinue
+    } else {
+        Write-Ok "Using cached repo at $cloneDir (installer v$ScriptVersion)"
     }
 
     if (-not (Test-Path -LiteralPath $installer)) {
@@ -147,14 +196,20 @@ function Invoke-BootstrapRepoAndReenter {
     }
 
     Write-Ok "Running installer from $cloneDir"
-    # Re-enter via environment only — avoids PowerShell mis-binding (e.g. -AgentKey -> SocksPort).
-    if ($ControllerUrl) { $env:CONTROLLER_URL = $ControllerUrl.Trim() }
-    if ($AgentKey) { $env:TRINITY_AGENT_KEY = $AgentKey }
-    if ($SocksPort) { $env:TRINITY_SOCKS_PORT = $SocksPort }
-    if ($LocalBinary) { $env:TRINITY_LOCAL_BINARY = $LocalBinary }
-    if ($DownloadUrl) { $env:TRINITY_DOWNLOAD_URL = $DownloadUrl }
-    if ($InstallDir) { $env:TRINITY_INSTALL_DIR = $InstallDir }
-    if ($UseScheduledTask) { $env:TRINITY_USE_SCHEDULED_TASK = "1" }
+    # Re-enter via environment only — never splat script parameters.
+    if ($env:CONTROLLER_URL) { $env:CONTROLLER_URL = $env:CONTROLLER_URL.Trim() }
+    if ($env:TRINITY_AGENT_KEY) { $env:TRINITY_AGENT_KEY = $env:TRINITY_AGENT_KEY.Trim() }
+    if ($env:TRINITY_SOCKS_PORT) {
+        $sp = $env:TRINITY_SOCKS_PORT.Trim()
+        if ($sp -and $sp -notmatch '^\s*-') { $env:TRINITY_SOCKS_PORT = $sp }
+        else { Remove-Item Env:TRINITY_SOCKS_PORT -ErrorAction SilentlyContinue }
+    }
+    if ($env:TRINITY_LOCAL_BINARY) { $env:TRINITY_LOCAL_BINARY = $env:TRINITY_LOCAL_BINARY.Trim() }
+    if (-not $env:TRINITY_DOWNLOAD_URL) {
+        $env:TRINITY_DOWNLOAD_URL = Get-DefaultDownloadUrl
+    }
+    if ($env:TRINITY_INSTALL_DIR) { $env:TRINITY_INSTALL_DIR = $env:TRINITY_INSTALL_DIR.Trim() }
+    if ($env:TRINITY_USE_SCHEDULED_TASK -eq "1") { $env:TRINITY_USE_SCHEDULED_TASK = "1" }
 
     & $installer
     exit $LASTEXITCODE
@@ -249,6 +304,8 @@ function Resolve-SocksPort {
 }
 
 function Resolve-SourceBinary {
+    param([switch]$DownloadOnly)
+
     if ($LocalBinary -and (Test-Path -LiteralPath $LocalBinary)) {
         Write-Ok "Using binary from TRINITY_LOCAL_BINARY"
         return (Resolve-Path -LiteralPath $LocalBinary).Path
@@ -261,6 +318,9 @@ function Resolve-SourceBinary {
     }
 
     if (-not $DownloadUrl) {
+        $DownloadUrl = Get-DefaultDownloadUrl
+    }
+    if ($DownloadUrl -eq $DefaultReleaseBinaryUrl) {
         $releaseUrl = Try-Get-GitHubReleaseBinaryUrl
         if ($releaseUrl) {
             $DownloadUrl = $releaseUrl
@@ -277,6 +337,10 @@ function Resolve-SourceBinary {
         }
         Write-Ok "Download complete"
         return $tempFile
+    }
+
+    if ($DownloadOnly) {
+        return $null
     }
 
     $built = Try-Build-WindowsBinary
@@ -420,101 +484,136 @@ function Start-AgentBackground([string]$WrapperPath) {
 
 # --- Main ---
 
+function Try-Install-StandaloneAgent {
+    if (Test-InRepoScriptsDir) { return $false }
+
+    Write-Step "Trying pre-built GitHub release binary (no Go required)..."
+    $savedDownload = $DownloadUrl
+    try {
+        $candidate = Resolve-SourceBinary -DownloadOnly
+    }
+    catch {
+        Write-Warn "Pre-built download not available yet ($($_.Exception.Message))"
+        return $false
+    }
+    finally {
+        $DownloadUrl = $savedDownload
+    }
+
+    if (-not $candidate -or -not (Test-Path -LiteralPath $candidate)) {
+        return $false
+    }
+
+    Invoke-AgentInstallCore -SourceBinary $candidate
+    return $true
+}
+
+function Invoke-AgentInstallCore {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SourceBinary
+    )
+
+    Write-Host ""
+    Write-Host "========================================" -ForegroundColor White
+    Write-Host "  TrinityProxy — Windows Agent Setup" -ForegroundColor White
+    Write-Host "========================================" -ForegroundColor White
+
+    if (-not (Test-Admin)) {
+        Write-Fail "This installer must run as Administrator."
+        Write-Host ""
+        Write-Host "Right-click PowerShell and choose 'Run as administrator', then run this script again."
+        exit 1
+    }
+
+    $nonInteractive = Test-NonInteractive
+    $script:socksPort = Resolve-SocksPort
+
+    if (-not $ControllerUrl) {
+        if ($nonInteractive) {
+            Write-Fail "CONTROLLER_URL is required when TRINITY_NONINTERACTIVE=1"
+            exit 1
+        }
+        $script:ControllerUrl = Read-Host "Enter your controller URL (example: https://api.example.com)"
+    }
+
+    if (-not $AgentKey) {
+        if ($nonInteractive) {
+            Write-Fail "TRINITY_AGENT_KEY is required when TRINITY_NONINTERACTIVE=1"
+            exit 1
+        }
+        $secure = Read-Host "Enter your agent key (from the dashboard Deploy Agent page)" -AsSecureString
+        $script:AgentKey = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
+            [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+        )
+    }
+
+    $script:ControllerUrl = $ControllerUrl.Trim().TrimEnd("/")
+    if (-not ($ControllerUrl -match "^https?://")) {
+        Write-Fail "CONTROLLER_URL must start with http:// or https://"
+        exit 1
+    }
+
+    Write-Step "Preparing install folder..."
+    New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
+    Write-Ok "Install folder: $InstallDir"
+
+    Write-Step "Locating TrinityProxy binary..."
+    $targetBinary = Join-Path $InstallDir $BinaryName
+    Copy-Item -LiteralPath $SourceBinary -Destination $targetBinary -Force
+    Write-Ok "Installed $BinaryName"
+
+    Ensure-FirewallRule -Port $socksPort
+
+    Write-Step "Writing agent configuration..."
+    $wrapperPath = Write-WrapperScript -TargetDir $InstallDir -Port $socksPort
+    Write-Ok "Launcher script ready (TRINITY_SKIP_INSTALLER=1, TRINITY_SOCKS_PORT=$socksPort)"
+
+    Start-AgentBackground -WrapperPath $wrapperPath
+
+    Write-Host ""
+    Write-Host "========================================" -ForegroundColor Green
+    Write-Host "  Setup complete!" -ForegroundColor Green
+    Write-Host "========================================" -ForegroundColor Green
+    Write-Host ""
+    Write-Host "Your Windows PC is now reporting to:"
+    Write-Host "  $ControllerUrl"
+    Write-Host ""
+    Write-Host "Embedded SOCKS5 proxy listens on TCP port $socksPort."
+    Write-Host "SOCKS credentials are auto-generated on first run and saved in:"
+    Write-Host "  $InstallDir\trinityproxy-username"
+    Write-Host "  $InstallDir\trinityproxy-password"
+    Write-Host ""
+    Write-Host "The agent runs in the background and starts automatically when Windows boots."
+    Write-Host "Open your TrinityProxy dashboard Agents page — the node should appear within about a minute."
+    Write-Host ""
+    Write-Host "Useful commands (run PowerShell as Administrator):"
+    if (-not $UseScheduledTask -and (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue)) {
+        Write-Host "  Check status:  Get-Service $ServiceName"
+        Write-Host "  View in Services: services.msc  (look for '$ServiceDisplayName')"
+        Write-Host "  Stop agent:      Stop-Service $ServiceName"
+        Write-Host "  Start agent:     Start-Service $ServiceName"
+        Write-Host "  Remove agent:    sc.exe delete $ServiceName"
+    }
+    else {
+        Write-Host "  Check task:      Get-ScheduledTask -TaskName $ServiceName"
+        Write-Host "  Stop agent:      Stop-ScheduledTask -TaskName $ServiceName"
+        Write-Host "  Start agent:     Start-ScheduledTask -TaskName $ServiceName"
+        Write-Host "  Remove agent:    Unregister-ScheduledTask -TaskName $ServiceName -Confirm:`$false"
+    }
+    Write-Host ""
+    Write-Host "Test SOCKS locally (replace USER/PASS from credential files above):"
+    Write-Host "  curl --proxy socks5://USER:PASS@127.0.0.1:$socksPort https://api.ipify.org"
+    Write-Host ""
+}
+
+
 if (-not (Test-InRepoScriptsDir)) {
+    if (Try-Install-StandaloneAgent) { exit 0 }
     Invoke-BootstrapRepoAndReenter
 }
 
 Assert-RepoScriptLocation
 
-Write-Host ""
-Write-Host "========================================" -ForegroundColor White
-Write-Host "  TrinityProxy — Windows Agent Setup" -ForegroundColor White
-Write-Host "========================================" -ForegroundColor White
-
-if (-not (Test-Admin)) {
-    Write-Fail "This installer must run as Administrator."
-    Write-Host ""
-    Write-Host "Right-click PowerShell and choose 'Run as administrator', then run this script again."
-    exit 1
-}
-
-$nonInteractive = Test-NonInteractive
-$socksPort = Resolve-SocksPort
-
-if (-not $ControllerUrl) {
-    if ($nonInteractive) {
-        Write-Fail "CONTROLLER_URL is required when TRINITY_NONINTERACTIVE=1"
-        exit 1
-    }
-    $ControllerUrl = Read-Host "Enter your controller URL (example: https://api.example.com)"
-}
-
-if (-not $AgentKey) {
-    if ($nonInteractive) {
-        Write-Fail "TRINITY_AGENT_KEY is required when TRINITY_NONINTERACTIVE=1"
-        exit 1
-    }
-    $secure = Read-Host "Enter your agent key (from the dashboard Deploy Agent page)" -AsSecureString
-    $AgentKey = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
-        [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
-    )
-}
-
-$ControllerUrl = $ControllerUrl.Trim().TrimEnd("/")
-if (-not ($ControllerUrl -match "^https?://")) {
-    Write-Fail "CONTROLLER_URL must start with http:// or https://"
-    exit 1
-}
-
-Write-Step "Preparing install folder..."
-New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
-Write-Ok "Install folder: $InstallDir"
-
-Write-Step "Locating TrinityProxy binary..."
 $sourceBinary = Resolve-SourceBinary
-$targetBinary = Join-Path $InstallDir $BinaryName
-Copy-Item -LiteralPath $sourceBinary -Destination $targetBinary -Force
-Write-Ok "Installed $BinaryName"
-
-Ensure-FirewallRule -Port $socksPort
-
-Write-Step "Writing agent configuration..."
-$wrapperPath = Write-WrapperScript -TargetDir $InstallDir -Port $socksPort
-Write-Ok "Launcher script ready (TRINITY_SKIP_INSTALLER=1, TRINITY_SOCKS_PORT=$socksPort)"
-
-Start-AgentBackground -WrapperPath $wrapperPath
-
-Write-Host ""
-Write-Host "========================================" -ForegroundColor Green
-Write-Host "  Setup complete!" -ForegroundColor Green
-Write-Host "========================================" -ForegroundColor Green
-Write-Host ""
-Write-Host "Your Windows PC is now reporting to:"
-Write-Host "  $ControllerUrl"
-Write-Host ""
-Write-Host "Embedded SOCKS5 proxy listens on TCP port $socksPort."
-Write-Host "SOCKS credentials are auto-generated on first run and saved in:"
-Write-Host "  $InstallDir\trinityproxy-username"
-Write-Host "  $InstallDir\trinityproxy-password"
-Write-Host ""
-Write-Host "The agent runs in the background and starts automatically when Windows boots."
-Write-Host "Open your TrinityProxy dashboard Agents page — the node should appear within about a minute."
-Write-Host ""
-Write-Host "Useful commands (run PowerShell as Administrator):"
-if (-not $UseScheduledTask -and (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue)) {
-    Write-Host "  Check status:  Get-Service $ServiceName"
-    Write-Host "  View in Services: services.msc  (look for '$ServiceDisplayName')"
-    Write-Host "  Stop agent:      Stop-Service $ServiceName"
-    Write-Host "  Start agent:     Start-Service $ServiceName"
-    Write-Host "  Remove agent:    sc.exe delete $ServiceName"
-}
-else {
-    Write-Host "  Check task:      Get-ScheduledTask -TaskName $ServiceName"
-    Write-Host "  Stop agent:      Stop-ScheduledTask -TaskName $ServiceName"
-    Write-Host "  Start agent:     Start-ScheduledTask -TaskName $ServiceName"
-    Write-Host "  Remove agent:    Unregister-ScheduledTask -TaskName $ServiceName -Confirm:`$false"
-}
-Write-Host ""
-Write-Host "Test SOCKS locally (replace USER/PASS from credential files above):"
-Write-Host "  curl --proxy socks5://USER:PASS@127.0.0.1:$socksPort https://api.ipify.org"
-Write-Host ""
+Invoke-AgentInstallCore -SourceBinary $sourceBinary

@@ -6,9 +6,17 @@ The agent:
 1. Starts an embedded SOCKS5 listener on `TRINITY_SOCKS_PORT` (default **1080**)
 2. Sends heartbeats every 60 seconds with the node's public IP, SOCKS port, and credentials
 
+## Pre-built binary (recommended)
+
+No Go required on the Windows PC. After the [Release agent binaries](https://github.com/Skillz147/TrinityProxy/actions/workflows/release-binaries.yml) workflow has run on `main`, download:
+
+`https://github.com/Skillz147/TrinityProxy/releases/download/latest/trinityproxy-windows-amd64.exe`
+
+The dashboard one-liner and `scripts/install-agent-windows.ps1` use this URL automatically.
+
 ---
 
-## Step 1 — Build the agent binary
+## Step 1 — Build the agent binary (optional)
 
 On a machine with Go installed (macOS, Linux, or Windows):
 

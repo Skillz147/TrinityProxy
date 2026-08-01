@@ -62,11 +62,11 @@ func BuildDeployCommands(settings *Settings, envFallback, agentKey string) Deplo
 		{
 			ID:            "windows",
 			Label:         "Windows",
-			Description:   "One paste in elevated PowerShell: downloads the installer from GitHub, extracts to %TEMP% (no Git), builds or downloads the agent binary, and registers a Windows service with embedded SOCKS5.",
+			Description:   "One paste in elevated PowerShell: downloads the installer and pre-built trinityproxy-windows-amd64.exe from GitHub Releases (no Go on your PC). Falls back to a fresh source zip only if the release is not published yet.",
 			ControllerURL: productionURL,
 			Command:       windowsCommand(productionURL, agentKey),
 			RunAs:         "Administrator (elevated PowerShell)",
-			Prerequisites: "Git for Windows (for first-time install). Run the command in elevated PowerShell — no manual clone or cd. Optional: pre-copy build\\trinityproxy.exe via TRINITY_LOCAL_BINARY or TRINITY_DOWNLOAD_URL to skip Go build.",
+			Prerequisites: "Elevated PowerShell only — no Git or Go required once GitHub Release latest is published. Optional: TRINITY_LOCAL_BINARY or TRINITY_DOWNLOAD_URL to use your own binary.",
 		},
 		{
 			ID:            "docker",
