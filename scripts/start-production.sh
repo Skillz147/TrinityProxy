@@ -269,7 +269,7 @@ run_as_root bash -c "
 	cd '$ROOT'
 	# shellcheck source=scripts/lib/production-common.sh
 	source '$ROOT/scripts/lib/production-common.sh'
-	export PATH="/usr/local/go/bin:\$PATH"
+	export PATH='/usr/local/go/bin:\$PATH'
 	production_init_dashboard_admin
 	production_sync_agent_key_to_controller_env
 	systemctl daemon-reload
