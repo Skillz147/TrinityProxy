@@ -189,6 +189,28 @@ for tool in "${essential_tools[@]}"; do
   fi
 done
 
+# User management (systemd service users on minimal images)
+if command -v adduser >/dev/null 2>&1 || command -v useradd >/dev/null 2>&1; then
+  green "[✔] adduser/useradd is available"
+else
+  yellow "[!] adduser/useradd not found. Installing..."
+  if command -v apt-get >/dev/null 2>&1; then
+    install_package adduser || install_package passwd || true
+  elif command -v yum >/dev/null 2>&1 || command -v dnf >/dev/null 2>&1; then
+    install_package shadow-utils || true
+  elif command -v apk >/dev/null 2>&1; then
+    install_package shadow || true
+  fi
+fi
+
+# OpenSSL (secret generation)
+if command -v openssl >/dev/null 2>&1; then
+  green "[✔] openssl is installed"
+else
+  yellow "[!] openssl not found. Installing..."
+  install_package openssl || true
+fi
+
 # SQLite CLI (agent key sync, dashboard DB inspection)
 if command -v sqlite3 >/dev/null 2>&1; then
   green "[✔] sqlite3 is installed"

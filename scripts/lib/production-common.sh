@@ -35,12 +35,29 @@ production_read_env_value() {
 	echo "${line#*=}"
 }
 
-production_ensure_trinityproxy_user() {
-	if ! id "$DASHBOARD_USER" &>/dev/null; then
-		echo "[*] Creating system user: $DASHBOARD_USER"
-		useradd --system --no-create-home --shell /usr/sbin/nologin \
-			--home-dir "$STATE_DIR" "$DASHBOARD_USER"
+# Create a system user for controller/dashboard (idempotent).
+production_create_system_user() {
+	local user="${1:-$DASHBOARD_USER}"
+	local home="${2:-$STATE_DIR}"
+
+	if id "$user" &>/dev/null; then
+		return 0
 	fi
+
+	echo "[*] Creating system user: $user"
+	if command -v adduser >/dev/null 2>&1; then
+		adduser --system --group --home "$home" --no-create-home --disabled-login "$user"
+	elif command -v useradd >/dev/null 2>&1; then
+		useradd --system --no-create-home --shell /usr/sbin/nologin \
+			--home-dir "$home" "$user"
+	else
+		echo "[-] Error: neither adduser nor useradd available (install adduser or passwd)"
+		return 1
+	fi
+}
+
+production_ensure_trinityproxy_user() {
+	production_create_system_user "$DASHBOARD_USER" "$STATE_DIR"
 }
 
 production_ensure_state_dir() {

@@ -47,6 +47,87 @@ run_as_root() {
 # shellcheck source=scripts/lib/production-common.sh
 source "$ROOT/scripts/lib/production-common.sh"
 
+apt_queue_pkg() {
+	local cmd="$1" pkg="$2"
+	if [[ -n "$cmd" ]] && command -v "$cmd" >/dev/null 2>&1; then
+		echo "[+] $cmd present"
+		return 0
+	fi
+	if command -v dpkg >/dev/null 2>&1 && dpkg -s "$pkg" >/dev/null 2>&1; then
+		echo "[+] $pkg installed"
+		if [[ -n "$cmd" ]] && ! command -v "$cmd" >/dev/null 2>&1; then
+			APT_INSTALL_QUEUE+=("$pkg")
+		fi
+		return 0
+	fi
+	APT_INSTALL_QUEUE+=("$pkg")
+}
+
+apt_dedupe_queue() {
+	local -a out=()
+	local p seen
+	for p in "${APT_INSTALL_QUEUE[@]}"; do
+		seen=0
+		for q in "${out[@]}"; do
+			[[ "$q" == "$p" ]] && seen=1 && break
+		done
+		[[ $seen -eq 0 ]] && out+=("$p")
+	done
+	APT_INSTALL_QUEUE=("${out[@]}")
+}
+
+apt_flush_install_queue() {
+	apt_dedupe_queue
+	if [[ ${#APT_INSTALL_QUEUE[@]} -eq 0 ]]; then
+		return 0
+	fi
+	echo "[*] Installing packages: ${APT_INSTALL_QUEUE[*]}"
+	run_as_root apt-get update -y
+	run_as_root apt-get install -y "${APT_INSTALL_QUEUE[@]}"
+	APT_INSTALL_QUEUE=()
+}
+
+ensure_system_deps_debian() {
+	APT_INSTALL_QUEUE=()
+	apt_queue_pkg curl curl
+	apt_queue_pkg wget wget
+	apt_queue_pkg git git
+	apt_queue_pkg make make
+	apt_queue_pkg sqlite3 sqlite3
+	apt_queue_pkg openssl openssl
+	if ! command -v gcc >/dev/null 2>&1; then
+		apt_queue_pkg gcc build-essential
+	else
+		echo "[+] gcc present"
+	fi
+	if command -v adduser >/dev/null 2>&1 || command -v useradd >/dev/null 2>&1; then
+		echo "[+] adduser/useradd present"
+	else
+		APT_INSTALL_QUEUE+=("adduser" "passwd")
+	fi
+	if command -v dpkg >/dev/null 2>&1 && ! dpkg -s ca-certificates >/dev/null 2>&1; then
+		APT_INSTALL_QUEUE+=("ca-certificates")
+	else
+		echo "[+] ca-certificates present"
+	fi
+	if ! command -v ip >/dev/null 2>&1; then
+		apt_queue_pkg ip iproute2
+	fi
+	apt_flush_install_queue
+
+	local cmd
+	for cmd in curl wget git make sqlite3 openssl gcc; do
+		if ! command -v "$cmd" >/dev/null 2>&1; then
+			echo "[-] Required command missing after install: $cmd"
+			exit 1
+		fi
+	done
+	if ! command -v adduser >/dev/null 2>&1 && ! command -v useradd >/dev/null 2>&1; then
+		echo "[-] Required user management tool missing (adduser or useradd)"
+		exit 1
+	fi
+}
+
 install_pkg() {
 	local pkg="$1"
 	if command -v apt-get >/dev/null 2>&1; then
@@ -74,26 +155,43 @@ ensure_command() {
 		return 0
 	fi
 	echo "[*] Installing $name..."
-	for pkg in "$@"; do
-		if install_pkg "$pkg"; then
-			command -v "$name" >/dev/null 2>&1 && return 0
+	local pkgs=("$@")
+	if command -v apt-get >/dev/null 2>&1; then
+		APT_INSTALL_QUEUE=("${pkgs[@]}")
+		apt_flush_install_queue
+		if command -v "$name" >/dev/null 2>&1; then
+			return 0
 		fi
-	done
+	else
+		for pkg in "${pkgs[@]}"; do
+			if install_pkg "$pkg"; then
+				command -v "$name" >/dev/null 2>&1 && return 0
+			fi
+		done
+	fi
 	echo "[-] Failed to install $name (tried: $*)"
 	exit 1
 }
 
 ensure_system_deps() {
 	echo "[1/10] Checking system dependencies (no Dante on controller)..."
+	if command -v apt-get >/dev/null 2>&1; then
+		ensure_system_deps_debian
+		return 0
+	fi
 	ensure_command curl curl
 	ensure_command make make
 	ensure_command git git
 	ensure_command wget wget
 	ensure_command sqlite3 sqlite3 sqlite
+	ensure_command openssl openssl
+	if command -v adduser >/dev/null 2>&1 || command -v useradd >/dev/null 2>&1; then
+		echo "[+] adduser/useradd present"
+	else
+		ensure_command useradd passwd || ensure_command adduser adduser
+	fi
 	if command -v gcc >/dev/null 2>&1; then
 		echo "[+] gcc present"
-	elif command -v apt-get >/dev/null 2>&1; then
-		ensure_command gcc build-essential
 	elif command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; then
 		ensure_command gcc gcc
 		command -v g++ >/dev/null 2>&1 || install_pkg gcc-c++ || true

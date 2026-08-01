@@ -5,6 +5,10 @@
 
 set -e
 
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=scripts/lib/production-common.sh
+source "$ROOT/scripts/lib/production-common.sh"
+
 CONTROLLER_USER="trinityproxy"
 CONTROLLER_GROUP="trinityproxy"
 STATE_DIR="/var/lib/trinityproxy"
@@ -23,13 +27,10 @@ if [ ! -f "cmd/api/enhanced_main.go" ]; then
 fi
 
 create_controller_user() {
-    if ! id "$CONTROLLER_USER" &>/dev/null; then
-        echo "[*] Creating system user: $CONTROLLER_USER"
-        useradd --system --no-create-home --shell /usr/sbin/nologin \
-            --home-dir "$STATE_DIR" "$CONTROLLER_USER"
-    else
-        echo "[*] System user $CONTROLLER_USER already exists"
-    fi
+	if id "$CONTROLLER_USER" &>/dev/null; then
+		echo "[*] System user $CONTROLLER_USER already exists"
+	fi
+	production_ensure_trinityproxy_user
 }
 
 setup_state_dir() {

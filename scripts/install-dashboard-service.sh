@@ -5,6 +5,10 @@
 
 set -euo pipefail
 
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=scripts/lib/production-common.sh
+source "$ROOT/scripts/lib/production-common.sh"
+
 DASHBOARD_USER="trinityproxy"
 DASHBOARD_GROUP="trinityproxy"
 STATE_DIR="/var/lib/trinityproxy"
@@ -22,13 +26,10 @@ if [[ ! -f "cmd/dashboard/main.go" ]]; then
 fi
 
 create_dashboard_user() {
-	if ! id "$DASHBOARD_USER" &>/dev/null; then
-		echo "[*] Creating system user: $DASHBOARD_USER"
-		useradd --system --no-create-home --shell /usr/sbin/nologin \
-			--home-dir "$STATE_DIR" "$DASHBOARD_USER"
-	else
+	if id "$DASHBOARD_USER" &>/dev/null; then
 		echo "[*] System user $DASHBOARD_USER already exists"
 	fi
+	production_ensure_trinityproxy_user
 }
 
 setup_state_dir() {
