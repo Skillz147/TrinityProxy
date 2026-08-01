@@ -118,3 +118,72 @@ func TestWindowsBootstrapOneLinerNoKey(t *testing.T) {
 		t.Errorf("no-key one-liner should not set TRINITY_AGENT_KEY")
 	}
 }
+
+func TestWindowsRemoveOneLiner(t *testing.T) {
+	line := windowsRemoveOneLiner()
+	if strings.Contains(line, "\n") {
+		t.Errorf("remove one-liner should be a single line")
+	}
+	for _, want := range []string{
+		"TrinityProxyAgent",
+		"Stop-Service",
+		"sc.exe delete",
+		"TrinityProxy SOCKS5",
+		"Remove-NetFirewallRule",
+		"ProgramFiles",
+		"Remove-Item",
+	} {
+		if !strings.Contains(line, want) {
+			t.Errorf("remove one-liner missing %q", want)
+		}
+	}
+}
+
+func TestWindowsStatusOneLiner(t *testing.T) {
+	line := windowsStatusOneLiner()
+	if strings.Contains(line, "\n") {
+		t.Errorf("status one-liner should be a single line")
+	}
+	for _, want := range []string{
+		"TrinityProxyAgent",
+		"Get-Service",
+		"trinityproxy-port",
+		"Get-NetTCPConnection",
+		"LISTENING",
+	} {
+		if !strings.Contains(line, want) {
+			t.Errorf("status one-liner missing %q", want)
+		}
+	}
+}
+
+func TestPlatformOperations(t *testing.T) {
+	settings := &Settings{
+		PublicDomain: "example.com",
+		SSLMode:      SSLModeCaddy,
+	}
+	commands := BuildDeployCommands(settings, "", "test-key")
+
+	win := findPlatform(commands.Platforms, "windows")
+	if len(win.Operations) != 4 {
+		t.Fatalf("windows operations = %d, want 4", len(win.Operations))
+	}
+	remove := win.Operations[1]
+	if remove.ID != "remove" {
+		t.Errorf("remove op id = %q, want remove", remove.ID)
+	}
+	if !strings.Contains(remove.Command, "Remove-NetFirewallRule") {
+		t.Errorf("remove command missing firewall cleanup")
+	}
+	if !strings.Contains(remove.Command, "sc.exe delete") {
+		t.Errorf("remove command missing service delete")
+	}
+
+	linux := findPlatform(commands.Platforms, "linux-vps")
+	if len(linux.Operations) != 4 {
+		t.Fatalf("linux operations = %d, want 4", len(linux.Operations))
+	}
+	if linux.Operations[0].ID != "install" {
+		t.Errorf("first linux op = %q, want install", linux.Operations[0].ID)
+	}
+}

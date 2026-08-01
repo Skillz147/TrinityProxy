@@ -30,6 +30,7 @@ import {
   fetchDeployCommands,
   type DeployCommandsResponse,
   type DeployPlatform,
+  type RemoteCommand,
   type SSLMode,
 } from "@/lib/api";
 import { toast } from "@/lib/toast";
@@ -46,6 +47,29 @@ const DEFAULT_PLATFORM: Record<DeployEnvironment, string> = {
   prod: "linux-vps",
   dev: "macos",
 };
+
+const DEFAULT_OPERATION = "install";
+
+const OPERATION_ICONS: Record<string, typeof Rocket> = {
+  install: Rocket,
+  remove: Terminal,
+  repair: Settings,
+  status: Info,
+};
+
+function platformOperations(platform: DeployPlatform): RemoteCommand[] {
+  if (platform.operations?.length) {
+    return platform.operations;
+  }
+  return [
+    {
+      id: "install",
+      label: "Install",
+      description: platform.description,
+      command: platform.command,
+    },
+  ];
+}
 
 const LOCAL_DEV_MODES: SSLMode[] = ["dev-mkcert", "none"];
 
@@ -86,6 +110,7 @@ export function DeployAgentPage() {
   const [data, setData] = useState<DeployCommandsResponse | null>(null);
   const [selectedEnv, setSelectedEnv] = useState<DeployEnvironment>("prod");
   const [selectedId, setSelectedId] = useState<string>("linux-vps");
+  const [selectedOpId, setSelectedOpId] = useState<string>(DEFAULT_OPERATION);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -122,6 +147,16 @@ export function DeployAgentPage() {
   const envPlatforms = data ? platformsForEnv(data.platforms, selectedEnv) : [];
   const selectedPlatform =
     envPlatforms.find((p) => p.id === selectedId) ?? envPlatforms[0];
+  const operations = selectedPlatform
+    ? platformOperations(selectedPlatform)
+    : [];
+  const selectedOperation =
+    operations.find((op) => op.id === selectedOpId) ?? operations[0];
+
+  function handlePlatformChange(id: string) {
+    setSelectedId(id);
+    setSelectedOpId(DEFAULT_OPERATION);
+  }
 
   function handleEnvChange(env: DeployEnvironment) {
     setSelectedEnv(env);
@@ -132,6 +167,7 @@ export function DeployAgentPage() {
       available[0]?.id ??
       DEFAULT_PLATFORM[env];
     setSelectedId(next);
+    setSelectedOpId(DEFAULT_OPERATION);
   }
 
   async function handleCopy(command: string) {
@@ -246,7 +282,7 @@ export function DeployAgentPage() {
                             ? "primary"
                             : "outline"
                         }
-                        onClick={() => setSelectedId(platform.id)}
+                        onClick={() => handlePlatformChange(platform.id)}
                         className={cn(
                           "flex-1 h-12 w-full sm:w-auto transition-all duration-200",
                           selectedPlatform?.id !== platform.id &&
@@ -309,7 +345,73 @@ export function DeployAgentPage() {
                     )}
                   </div>
 
-                  {selectedPlatform.id === "windows" && (
+                  {operations.length > 1 && (
+                    <div className="space-y-3">
+                      <Label className="text-muted-foreground uppercase text-xs font-semibold tracking-wider">
+                        Remote Command
+                      </Label>
+                      <div className="flex flex-col sm:flex-row flex-wrap gap-2 w-full">
+                        {operations.map((op) => {
+                          const OpIcon =
+                            OPERATION_ICONS[op.id] ?? Terminal;
+                          const isRemove = op.id === "remove";
+                          return (
+                            <Button
+                              key={op.id}
+                              variant={
+                                selectedOperation?.id === op.id
+                                  ? isRemove
+                                    ? "destructive"
+                                    : "primary"
+                                  : "outline"
+                              }
+                              onClick={() => setSelectedOpId(op.id)}
+                              className={cn(
+                                "h-10 transition-all duration-200",
+                                selectedOperation?.id !== op.id &&
+                                  (isRemove
+                                    ? "text-destructive hover:border-destructive/50"
+                                    : "text-muted-foreground hover:border-primary/50"),
+                              )}
+                            >
+                              <OpIcon className="h-4 w-4 opacity-80" />
+                              {op.label}
+                            </Button>
+                          );
+                        })}
+                      </div>
+                      {selectedOperation?.description && (
+                        <p className="text-sm text-muted-foreground">
+                          {selectedOperation.description}
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {selectedPlatform.id === "windows" &&
+                    selectedOperation?.id === "remove" && (
+                      <div className="flex items-start gap-2.5 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-muted-foreground">
+                        <Monitor className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+                        <p>
+                          This stops{" "}
+                          <strong className="text-foreground">
+                            TrinityProxyAgent
+                          </strong>
+                          , deletes the Windows service, removes{" "}
+                          <code className="text-xs">
+                            C:\Program Files\TrinityProxy
+                          </code>
+                          , and removes firewall rules for the agent SOCKS port.
+                          Remove the node from the dashboard{" "}
+                          <strong className="text-foreground">Agents</strong>{" "}
+                          page separately if needed.
+                        </p>
+                      </div>
+                    )}
+
+                  {selectedPlatform.id === "windows" &&
+                    (selectedOperation?.id === "install" ||
+                      selectedOperation?.id === "repair") && (
                     <div className="flex items-start gap-2.5 rounded-md border border-primary/30 bg-primary/5 p-3 text-sm text-muted-foreground">
                       <Monitor className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
                       <p>
@@ -325,7 +427,21 @@ export function DeployAgentPage() {
                     </div>
                   )}
 
-                  {selectedPlatform.prerequisites && (
+                  {selectedPlatform.id === "windows" &&
+                    selectedOperation?.id === "status" && (
+                    <div className="flex items-start gap-2.5 rounded-md border border-border/50 bg-muted/30 p-3 text-sm text-muted-foreground">
+                      <Monitor className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                      <p>
+                        Paste into{" "}
+                        <strong className="text-foreground">elevated PowerShell</strong>{" "}
+                        to query the TrinityProxyAgent service and whether the configured
+                        SOCKS port is listening.
+                      </p>
+                    </div>
+                  )}
+
+                  {selectedPlatform.prerequisites &&
+                    selectedOperation?.id === "install" && (
                     <div className="flex items-start gap-2.5 rounded-md border border-border/50 bg-muted/30 p-3 text-sm text-muted-foreground">
                       <Info className="mt-0.5 h-4 w-4 shrink-0 text-primary/70" />
                       <p>{selectedPlatform.prerequisites}</p>
@@ -335,12 +451,17 @@ export function DeployAgentPage() {
                   <div className="space-y-3">
                     <div className="flex items-center justify-between gap-2">
                       <Label className="text-sm font-semibold">
-                        Install Command
+                        {selectedOperation?.label ?? "Install"} Command
                       </Label>
                       <Button
                         variant="secondary"
                         size="sm"
-                        onClick={() => void handleCopy(selectedPlatform.command)}
+                        onClick={() =>
+                          void handleCopy(
+                            selectedOperation?.command ??
+                              selectedPlatform.command,
+                          )
+                        }
                         className="h-8"
                       >
                         {copied ? (
@@ -358,7 +479,10 @@ export function DeployAgentPage() {
                     </div>
                     <div className="group relative">
                       <pre className="overflow-x-auto rounded-lg border border-border bg-zinc-950 p-4 text-xs leading-relaxed text-zinc-50 shadow-inner">
-                        <code>{selectedPlatform.command}</code>
+                        <code>
+                          {selectedOperation?.command ??
+                            selectedPlatform.command}
+                        </code>
                       </pre>
                     </div>
                   </div>

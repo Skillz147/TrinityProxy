@@ -89,6 +89,13 @@ export interface BootstrapScriptResponse {
   has_agent_key: boolean;
 }
 
+export interface RemoteCommand {
+  id: string;
+  label: string;
+  description: string;
+  command: string;
+}
+
 export interface DeployPlatform {
   id: string;
   label: string;
@@ -97,6 +104,7 @@ export interface DeployPlatform {
   controller_url: string;
   run_as?: string;
   prerequisites?: string;
+  operations?: RemoteCommand[];
 }
 
 export interface DeployCommandsResponse {
@@ -238,6 +246,15 @@ export function fetchDashboardStats(token: string | null): Promise<DashboardStat
 
 export function fetchDashboardNodes(token: string | null): Promise<NodesResponse> {
   return apiFetch("/dashboard/nodes", token);
+}
+
+export function deleteDashboardNode(
+  token: string | null,
+  nodeId: string,
+): Promise<{ status: string; node_id: string }> {
+  return apiFetch(`/dashboard/nodes/${encodeURIComponent(nodeId)}`, token, {
+    method: "DELETE",
+  });
 }
 
 export function fetchNodeCredentials(
