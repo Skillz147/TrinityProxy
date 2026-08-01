@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type MouseEvent } from "reac
 import { Eye, Link2, Server, Trash2 } from "lucide-react";
 import { EmptyState } from "@/components/EmptyState";
 import { ErrorState } from "@/components/ErrorState";
+import { RemoveAgentDialog } from "@/components/RemoveAgentDialog";
 import { SocksCredentialsDialog } from "@/components/SocksCredentialsDialog";
 import {
   HealthBadge,
@@ -17,7 +18,6 @@ import {
   ApiError,
   fetchDashboardNodes,
   fetchNodeCredentials,
-  deleteDashboardNode,
   type ProxyNode,
 } from "@/lib/api";
 import { toast } from "@/lib/toast";
@@ -263,6 +263,7 @@ export function AgentsPage() {
   const [error, setError] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [credentialsNode, setCredentialsNode] = useState<ProxyNode | null>(null);
+  const [removeNode, setRemoveNode] = useState<ProxyNode | null>(null);
 
   const countries = useMemo(() => {
     const values = new Set<string>();
@@ -390,23 +391,6 @@ export function AgentsPage() {
     setContextMenu({ node, x: event.clientX, y: event.clientY });
   };
 
-  const handleRemoveAgent = async (node: ProxyNode) => {
-    const label = `${node.ip}:${node.port}`;
-    if (!window.confirm(`Remove agent ${label} from the dashboard?`)) {
-      return;
-    }
-
-    try {
-      await deleteDashboardNode(token, node.id);
-      setNodes((current) => current.filter((item) => item.id !== node.id));
-      toast.success(`Removed agent ${label}`);
-    } catch (err) {
-      const message =
-        err instanceof ApiError ? err.message : "Unable to remove agent.";
-      toast.error(message);
-    }
-  };
-
   return (
     <div className="space-y-6">
         {isLoading && <TableSkeleton rows={6} columns={7} />}
@@ -490,7 +474,7 @@ export function AgentsPage() {
           token={token}
           onClose={() => setContextMenu(null)}
           onViewCredentials={setCredentialsNode}
-          onRemove={(node) => void handleRemoveAgent(node)}
+          onRemove={setRemoveNode}
         />
       )}
 
@@ -498,6 +482,15 @@ export function AgentsPage() {
         node={credentialsNode}
         token={token}
         onClose={() => setCredentialsNode(null)}
+      />
+
+      <RemoveAgentDialog
+        node={removeNode}
+        token={token}
+        onClose={() => setRemoveNode(null)}
+        onRemoved={(nodeId) =>
+          setNodes((current) => current.filter((item) => item.id !== nodeId))
+        }
       />
     </div>
   );

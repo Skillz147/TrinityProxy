@@ -11,6 +11,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+# shellcheck source=scripts/lib/dev-ports.sh
+source "$ROOT/scripts/lib/dev-ports.sh"
+
 PID_DIR="$ROOT/.dev"
 API_PID_FILE="$PID_DIR/dashboard-api.pid"
 VITE_PID_FILE="$PID_DIR/dashboard-vite.pid"
@@ -27,28 +30,6 @@ DASHBOARD_DB="${DASHBOARD_DB_PATH:-./dashboard.db}"
 
 mkdir -p "$PID_DIR"
 
-stop_by_pid_file() {
-	local file=$1
-	if [[ -f "$file" ]]; then
-		local pid
-		pid="$(cat "$file")"
-		if kill -0 "$pid" 2>/dev/null; then
-			kill "$pid" 2>/dev/null || true
-			pkill -P "$pid" 2>/dev/null || true
-		fi
-		rm -f "$file"
-	fi
-}
-
-stop_by_port() {
-	local port=$1
-	local pids
-	pids="$(lsof -ti:"$port" 2>/dev/null || true)"
-	if [[ -n "$pids" ]]; then
-		kill $pids 2>/dev/null || true
-	fi
-}
-
 cleanup() {
 	local code=$?
 	if [[ "${TRINITY_START_CLEANUP_DONE:-}" == "1" ]]; then
@@ -57,21 +38,33 @@ cleanup() {
 	export TRINITY_START_CLEANUP_DONE=1
 	echo ""
 	echo "[*] Stopping dev servers..."
-	stop_by_pid_file "$API_PID_FILE"
-	stop_by_pid_file "$VITE_PID_FILE"
-	stop_by_pid_file "$CONTROLLER_PID_FILE"
-	stop_by_port "$VITE_PORT"
-	stop_by_port "$DASHBOARD_PORT"
-	stop_by_port "$CONTROLLER_PORT"
+	stop_dev_pid_file "$CONTROLLER_PID_FILE" "controller API" || true
+	stop_dev_pid_file "$API_PID_FILE" "dashboard API" || true
+	stop_dev_pid_file "$VITE_PID_FILE" "dashboard UI" || true
+	stop_port_force "$CONTROLLER_PORT" "controller API" || true
+	stop_port_force "$VITE_PORT" "Vite UI" || true
+	stop_port_force "$DASHBOARD_PORT" "dashboard API" || true
 	exit "$code"
 }
 
 trap cleanup EXIT INT TERM
 
-if lsof -ti:"$VITE_PORT" >/dev/null 2>&1 || lsof -ti:"$DASHBOARD_PORT" >/dev/null 2>&1 || lsof -ti:"$CONTROLLER_PORT" >/dev/null 2>&1; then
+if dev_ports_in_use; then
 	echo "[!] Ports :$VITE_PORT, :$DASHBOARD_PORT, or :$CONTROLLER_PORT are already in use."
-	echo "    Run 'make stop' first, then try again."
-	exit 1
+	echo "[*] Stopping stale dev processes..."
+	stop_dev_pid_file "$CONTROLLER_PID_FILE" "controller API" || true
+	stop_dev_pid_file "$API_PID_FILE" "dashboard API" || true
+	stop_dev_pid_file "$VITE_PID_FILE" "dashboard UI" || true
+	stop_port_force "$CONTROLLER_PORT" "controller API" || true
+	stop_port_force "$VITE_PORT" "Vite UI" || true
+	stop_port_force "$DASHBOARD_PORT" "dashboard API" || true
+	sleep 0.5
+	if dev_ports_in_use; then
+		echo "[-] Could not free dev ports. Run 'make stop', or manually kill processes on :$VITE_PORT, :$DASHBOARD_PORT, and :$CONTROLLER_PORT."
+		echo "    Start the dev stack with: make start-dev   (hyphen, not 'make start dev')"
+		exit 1
+	fi
+	echo "[+] Ports cleared."
 fi
 
 echo "[*] Building dashboard API and controller API..."

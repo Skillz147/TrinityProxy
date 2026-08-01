@@ -10,6 +10,13 @@ $(error Wrong command: use 'make run-dashboard' (hyphen, not space). Run 'make d
 endif
 endif
 
+# Catch accidental "make start dev" (space) — the target is start-dev (hyphen).
+ifneq (,$(filter dev,$(MAKECMDGOALS)))
+ifeq ($(filter start dev,$(MAKECMDGOALS)),start dev)
+$(error Wrong command: use 'make start-dev' (hyphen, not space). Run 'make help' for dev commands.)
+endif
+endif
+
 # Default target
 all: deps build
 
