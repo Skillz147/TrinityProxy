@@ -6,7 +6,7 @@ import (
 )
 
 const (
-	githubRepoCloneURL = "https://github.com/Skillz147/TrinityProxy.git"
+	githubRawInstallScript = "https://raw.githubusercontent.com/Skillz147/TrinityProxy/main/scripts/install-agent-windows.ps1"
 
 	localControllerURL  = "http://127.0.0.1:3100"
 	dockerControllerURL = "http://host.docker.internal:3100"
@@ -62,7 +62,7 @@ func BuildDeployCommands(settings *Settings, envFallback, agentKey string) Deplo
 		{
 			ID:            "windows",
 			Label:         "Windows",
-			Description:   "One paste in elevated PowerShell: clones the installer to %TEMP%, builds or downloads the agent binary, and registers a Windows service with embedded SOCKS5.",
+			Description:   "One paste in elevated PowerShell: downloads the installer from GitHub, extracts to %TEMP% (no Git), builds or downloads the agent binary, and registers a Windows service with embedded SOCKS5.",
 			ControllerURL: productionURL,
 			Command:       windowsCommand(productionURL, agentKey),
 			RunAs:         "Administrator (elevated PowerShell)",
@@ -126,13 +126,13 @@ func psSingleQuoted(s string) string {
 }
 
 func windowsBootstrapOneLiner(controllerURL, agentKey string) string {
-	cloneURL := psSingleQuoted(githubRepoCloneURL)
+	scriptURL := psSingleQuoted(githubRawInstallScript)
 	ctrl := psSingleQuoted(controllerURL)
 	inner := fmt.Sprintf("$env:CONTROLLER_URL=%s; $env:TRINITY_NONINTERACTIVE='1'", ctrl)
 	if agentKey != "" {
 		inner += fmt.Sprintf("; $env:TRINITY_AGENT_KEY=%s", psSingleQuoted(agentKey))
 	}
-	inner += fmt.Sprintf("; $d=Join-Path $env:TEMP 'TrinityProxy'; if(-not(Test-Path (Join-Path $d '.git'))){ git clone --depth 1 %s $d; if($LASTEXITCODE -ne 0){ throw 'git clone failed. Install Git for Windows from https://git-scm.com/download/win' } }; & (Join-Path $d 'scripts\\install-agent-windows.ps1')", cloneURL)
+	inner += fmt.Sprintf("; $s=Join-Path $env:TEMP 'tp-install.ps1'; iwr -UseBasicParsing -Uri %s -OutFile $s; & $s", scriptURL)
 	return "& { " + inner + " }"
 }
 

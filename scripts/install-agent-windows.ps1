@@ -20,7 +20,7 @@
     TRINITY_INSTALL_DIR=C:\Program Files\TrinityProxy  Override install folder
 
   Paste-and-run: use the one-liner from the dashboard Deploy Agent page (elevated PowerShell).
-  The installer clones to %TEMP%\TrinityProxy when needed and builds the agent with Go if no binary is present.
+  Paste-and-run downloads this script from GitHub, extracts the repo to %TEMP%\TrinityProxy (no Git), then builds with Go if needed or uses a GitHub Release binary.
 
   Run in an elevated PowerShell (Run as administrator).
 
@@ -84,37 +84,61 @@ function Test-InRepoScriptsDir {
     return (Test-Path -LiteralPath (Join-Path $repoRoot "go.mod"))
 }
 
+function Try-Get-GitHubReleaseBinaryUrl {
+    $repo = if ($env:TRINITY_GITHUB_REPO) { $env:TRINITY_GITHUB_REPO.Trim() } else { "Skillz147/TrinityProxy" }
+    try {
+        $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases/latest" -Headers @{ "User-Agent" = "TrinityProxy-Installer" } -UseBasicParsing
+        foreach ($asset in $release.assets) {
+            if ($asset.name -match '(?i)trinityproxy.*\.exe$') {
+                return $asset.browser_download_url
+            }
+        }
+    }
+    catch {
+        return $null
+    }
+    return $null
+}
+
 function Invoke-BootstrapRepoAndReenter {
-    $repoURL = if ($env:TRINITY_REPO_URL) { $env:TRINITY_REPO_URL.Trim() } else { "https://github.com/Skillz147/TrinityProxy.git" }
+    $branch = if ($env:TRINITY_REPO_BRANCH) { $env:TRINITY_REPO_BRANCH.Trim() } else { "main" }
+    $zipURL = if ($env:TRINITY_REPO_ZIP_URL) { $env:TRINITY_REPO_ZIP_URL.Trim() } else { "https://github.com/Skillz147/TrinityProxy/archive/refs/heads/$branch.zip" }
     $cloneDir = Join-Path $env:TEMP "TrinityProxy"
     $installer = Join-Path $cloneDir "scripts\install-agent-windows.ps1"
 
     Write-Step "Preparing TrinityProxy installer (one-time download)..."
-    $git = Get-Command git -ErrorAction SilentlyContinue
-    if (-not $git) {
-        Write-Fail "Git is required for the paste-and-run installer."
-        Write-Host ""
-        Write-Host "Install Git for Windows, then run the dashboard command again:"
-        Write-Host "  https://git-scm.com/download/win"
-        Write-Host ""
-        Write-Host "Or clone manually and run scripts\install-agent-windows.ps1 from the repo."
-        exit 1
-    }
+    if (-not (Test-Path -LiteralPath $installer)) {
+        $zipFile = Join-Path $env:TEMP "TrinityProxy-src.zip"
+        Write-Host "   Downloading: $zipURL"
+        Invoke-WebRequest -Uri $zipURL -OutFile $zipFile -UseBasicParsing
+        if (-not (Test-Path -LiteralPath $zipFile)) {
+            Write-Fail "Download failed — archive not found."
+            exit 1
+        }
 
-    if (-not (Test-Path -LiteralPath (Join-Path $cloneDir ".git"))) {
-        Write-Host "   Cloning $repoURL (depth 1) to $cloneDir"
+        $extractRoot = Join-Path $env:TEMP "TrinityProxy-extract"
+        if (Test-Path -LiteralPath $extractRoot) {
+            Remove-Item -LiteralPath $extractRoot -Recurse -Force
+        }
+        New-Item -ItemType Directory -Path $extractRoot -Force | Out-Null
+        Expand-Archive -LiteralPath $zipFile -DestinationPath $extractRoot -Force
+
+        $extracted = Get-ChildItem -LiteralPath $extractRoot -Directory | Select-Object -First 1
+        if (-not $extracted) {
+            Write-Fail "Could not find extracted folder in archive."
+            exit 1
+        }
+
         if (Test-Path -LiteralPath $cloneDir) {
             Remove-Item -LiteralPath $cloneDir -Recurse -Force
         }
-        & git clone --depth 1 $repoURL $cloneDir
-        if ($LASTEXITCODE -ne 0) {
-            Write-Fail "git clone failed (exit $LASTEXITCODE)."
-            exit 1
-        }
+        Move-Item -LiteralPath $extracted.FullName -Destination $cloneDir
+        Remove-Item -LiteralPath $extractRoot -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $zipFile -Force -ErrorAction SilentlyContinue
     }
 
     if (-not (Test-Path -LiteralPath $installer)) {
-        Write-Fail "Installer script missing after clone: $installer"
+        Write-Fail "Installer script missing after download: $installer"
         exit 1
     }
 
@@ -180,12 +204,7 @@ function Assert-RepoScriptLocation {
         Write-Host "Actual script path:   $PSCommandPath"
         Write-Host "Current directory:    $(Get-Location)"
         Write-Host ""
-        Write-Host "From an elevated PowerShell:"
-        Write-Host "  git clone https://github.com/Skillz147/TrinityProxy.git"
-        Write-Host "  cd TrinityProxy"
-        Write-Host "  .\scripts\$scriptName"
-        Write-Host ""
-        Write-Host "Or download only the agent binary and set TRINITY_DOWNLOAD_URL before running a copy of this script."
+        Write-Host "Use the one-liner from the dashboard Deploy Agent page (elevated PowerShell), or set TRINITY_DOWNLOAD_URL / TRINITY_LOCAL_BINARY when running a copy of this script."
         exit 1
     }
 
@@ -233,6 +252,13 @@ function Resolve-SourceBinary {
     if (Test-Path -LiteralPath $repoBinary) {
         Write-Ok "Using local build: build\$BinaryName"
         return (Resolve-Path -LiteralPath $repoBinary).Path
+    }
+
+    if (-not $DownloadUrl) {
+        $releaseUrl = Try-Get-GitHubReleaseBinaryUrl
+        if ($releaseUrl) {
+            $DownloadUrl = $releaseUrl
+        }
     }
 
     if ($DownloadUrl) {

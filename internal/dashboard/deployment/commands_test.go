@@ -88,14 +88,17 @@ func TestWindowsBootstrapOneLiner(t *testing.T) {
 	if !strings.Contains(win.Command, "secret-key-abc") {
 		t.Errorf("windows command missing agent key")
 	}
-	if !strings.Contains(win.Command, "git clone --depth 1") {
-		t.Errorf("windows command missing shallow clone")
+	if !strings.Contains(win.Command, "iwr -UseBasicParsing") {
+		t.Errorf("windows command missing script download")
 	}
-	if !strings.Contains(win.Command, "install-agent-windows.ps1") {
-		t.Errorf("windows command missing installer script")
+	if strings.Contains(win.Command, "git clone") {
+		t.Errorf("windows command must not use git clone")
 	}
-	if !strings.Contains(win.Command, "Join-Path $env:TEMP 'TrinityProxy'") {
-		t.Errorf("windows command missing TEMP clone path")
+	if !strings.Contains(win.Command, "raw.githubusercontent.com") {
+		t.Errorf("windows command missing raw install script URL")
+	}
+	if !strings.Contains(win.Command, "Join-Path $env:TEMP 'tp-install.ps1'") {
+		t.Errorf("windows command missing temp installer path")
 	}
 	if strings.Contains(win.Command, ".\\scripts\\install-agent-windows.ps1") {
 		t.Errorf("windows command should not require manual cd to repo")

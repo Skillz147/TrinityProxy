@@ -315,11 +315,12 @@ export function DeployAgentPage() {
                       <p>
                         Copy the command below and paste it into{" "}
                         <strong className="text-foreground">elevated PowerShell</strong>{" "}
-                        (Run as administrator). It clones the installer to{" "}
+                        (Run as administrator). Requires{" "}
+                        <strong className="text-foreground">PowerShell only (no Git)</strong>
+                        : downloads the installer from GitHub, extracts to{" "}
                         <code className="text-xs">%TEMP%\TrinityProxy</code>, builds the
-                        agent if needed, and registers the Windows service — no manual{" "}
-                        <code className="text-xs">git clone</code> or{" "}
-                        <code className="text-xs">cd</code> required.
+                        agent with Go if needed (or uses a release binary), and registers
+                        the Windows service.
                       </p>
                     </div>
                   )}
