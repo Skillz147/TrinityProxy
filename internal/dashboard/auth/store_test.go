@@ -125,3 +125,41 @@ func TestChangePasswordSessionRemainsValid(t *testing.T) {
 		t.Fatal("expected must_change_password=false in session user")
 	}
 }
+
+func TestResetAdminRecreatesCredentials(t *testing.T) {
+	store := newTestStore(t)
+
+	user, err := store.CreateAdminUser("admin", "temp-pass")
+	if err != nil {
+		t.Fatalf("CreateAdminUser: %v", err)
+	}
+
+	if err := store.ChangePassword(user.ID, "temp-pass", "permanent-password"); err != nil {
+		t.Fatalf("ChangePassword: %v", err)
+	}
+
+	login, err := store.Login("admin", "permanent-password")
+	if err != nil {
+		t.Fatalf("Login before reset: %v", err)
+	}
+
+	result, err := store.ResetAdmin("admin")
+	if err != nil {
+		t.Fatalf("ResetAdmin: %v", err)
+	}
+	if !result.Created || result.TempPassword == "" {
+		t.Fatal("expected new temp credentials from ResetAdmin")
+	}
+
+	if _, err := store.Login("admin", "permanent-password"); !errors.Is(err, ErrInvalidPassword) {
+		t.Fatalf("old password should fail after reset, got %v", err)
+	}
+
+	if _, err := store.ValidateSession(login.Token); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("sessions should be cleared after reset, got %v", err)
+	}
+
+	if _, err := store.Login("admin", result.TempPassword); err != nil {
+		t.Fatalf("Login with new temp password: %v", err)
+	}
+}

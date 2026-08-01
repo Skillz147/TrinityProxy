@@ -47,6 +47,8 @@ sudo make start
 
 `make start` prints admin credentials at the end — save them before closing the terminal.
 
+Locked out of the dashboard? Regenerate admin login (keeps agent keys): `sudo make reset-dashboard-admin`
+
 During bootstrap, step **[10/11]** optionally walks through **domain + Cloudflare HTTPS** (DNS checklist, confirm, Caddy). You can skip and keep using the dashboard on **:8081**.
 
 **GCP/cloud firewall:** allow inbound TCP **8081**, **3100**, **80**, **443** (80/443 when using HTTPS).

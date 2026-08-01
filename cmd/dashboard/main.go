@@ -20,14 +20,27 @@ import (
 
 func main() {
 	initOnly := false
+	resetAdmin := false
 	for _, arg := range os.Args[1:] {
-		if arg == "--init-only" {
+		switch arg {
+		case "--init-only":
 			initOnly = true
+		case "--reset-admin":
+			resetAdmin = true
 		}
+	}
+	if initOnly && resetAdmin {
+		fmt.Fprintln(os.Stderr, "error: use only one of --init-only or --reset-admin")
+		os.Exit(2)
 	}
 
 	log := logutil.New("dashboard")
 	cfg := dashboard.LoadConfig()
+
+	if resetAdmin {
+		runResetAdmin(log, cfg)
+		return
+	}
 
 	authStore, err := dashauth.NewStore(cfg.DBPath, cfg.SessionTTL)
 	if err != nil {
@@ -203,6 +216,33 @@ func registerStaticUI(mux *http.ServeMux, staticDir string, log *slog.Logger) {
 		http.ServeFile(w, r, indexPath)
 	})
 	log.Info("serving built dashboard UI", "dir", absDir)
+}
+
+
+
+func runResetAdmin(log *slog.Logger, cfg dashboard.Config) {
+	if _, err := os.Stat(cfg.DBPath); err != nil {
+		if os.IsNotExist(err) {
+			logutil.Fatal(log, "dashboard database not found — install or bootstrap first",
+				"db", cfg.DBPath,
+				"hint", "run: sudo make start (production) or make dashboard-init (dev)",
+			)
+		}
+		logutil.Fatal(log, "cannot access dashboard database", "err", err, "db", cfg.DBPath)
+	}
+
+	authStore, err := dashauth.NewStore(cfg.DBPath, cfg.SessionTTL)
+	if err != nil {
+		logutil.Fatal(log, "failed to open dashboard auth store", "err", err, "db", cfg.DBPath)
+	}
+	defer authStore.Close()
+
+	bootstrap, err := authStore.ResetAdmin(cfg.AdminUsername)
+	if err != nil {
+		logutil.Fatal(log, "failed to reset dashboard admin", "err", err)
+	}
+
+	printBootstrapCredentials(cfg.DashboardURL, bootstrap.Username, bootstrap.TempPassword, false)
 }
 
 func printBootstrapCredentials(dashboardURL, username, tempPassword string, deferPrint bool) {

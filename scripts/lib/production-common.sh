@@ -728,8 +728,7 @@ production_print_dashboard_login_banner() {
 		echo ""
 		echo "  Dashboard URL:  $(production_http_url "$DASHBOARD_PORT")"
 		echo "  Dashboard admin already exists — no new password was generated."
-		echo "  Use your existing password or reset the dashboard database."
-		echo "  Fresh credentials: sudo make uninstall-production && sudo make start"
+		echo "  Locked out? Generate new login: sudo make reset-dashboard-admin"
 	fi
 	echo "$sep"
 }

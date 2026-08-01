@@ -54,3 +54,34 @@ func generateTempPassword() (string, error) {
 	}
 	return hex.EncodeToString(buf), nil
 }
+
+// ResetAdmin removes all dashboard users and sessions, then creates a fresh admin with a new temp password.
+// Deployment settings and agent keys in the same database are not modified.
+func (s *Store) ResetAdmin(username string) (*BootstrapResult, error) {
+	if _, err := s.db.Exec(`DELETE FROM dashboard_sessions`); err != nil {
+		return nil, fmt.Errorf("clear sessions: %w", err)
+	}
+	if _, err := s.db.Exec(`DELETE FROM dashboard_users`); err != nil {
+		return nil, fmt.Errorf("clear users: %w", err)
+	}
+
+	if username == "" {
+		username = defaultAdminUsername
+	}
+
+	tempPassword, err := generateTempPassword()
+	if err != nil {
+		return nil, err
+	}
+
+	user, err := s.CreateAdminUser(username, tempPassword)
+	if err != nil {
+		return nil, err
+	}
+
+	return &BootstrapResult{
+		Username:     user.Username,
+		TempPassword: tempPassword,
+		Created:      true,
+	}, nil
+}
