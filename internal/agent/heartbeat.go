@@ -6,29 +6,40 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"time"
-)
 
-const (
-	heartbeatInterval = 60 * time.Second
-	controlAPIURL     = "https://api.sauronstore.com/api/heartbeat" // central HTTPS API endpoint
+	"github.com/Skillz147/TrinityProxy/internal/config"
+	"github.com/Skillz147/TrinityProxy/internal/logutil"
+	"github.com/Skillz147/TrinityProxy/internal/proxy"
 )
 
 func StartHeartbeatLoop() {
+	log := logutil.New("agent")
+	cfg := config.Load()
+	log.Info("heartbeat loop started",
+		"target", cfg.HeartbeatURL(),
+		"interval", cfg.HeartbeatInterval.String(),
+	)
+	if srv := proxy.Active(); srv != nil {
+		log.Info("reporting embedded SOCKS endpoint",
+			"port", srv.Port,
+			"username", srv.Username,
+		)
+	}
+
 	for {
-		err := sendHeartbeat()
+		err := sendHeartbeat(cfg)
 		if err != nil {
-			log.Printf("[-] Heartbeat failed: %v", err)
+			log.Warn("heartbeat failed", "err", err)
 		} else {
-			log.Println("[+] Heartbeat sent successfully")
+			log.Info("heartbeat sent")
 		}
-		time.Sleep(heartbeatInterval)
+		time.Sleep(cfg.HeartbeatInterval)
 	}
 }
 
-func sendHeartbeat() error {
+func sendHeartbeat(cfg config.Config) error {
 	meta, err := GatherMetadata()
 	if err != nil {
 		return fmt.Errorf("metadata error: %w", err)
@@ -39,11 +50,15 @@ func sendHeartbeat() error {
 		return fmt.Errorf("marshal error: %w", err)
 	}
 
-	req, err := http.NewRequest("POST", controlAPIURL, bytes.NewBuffer(data))
+	req, err := http.NewRequest("POST", cfg.HeartbeatURL(), bytes.NewBuffer(data))
 	if err != nil {
 		return fmt.Errorf("request error: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if cfg.AgentKey != "" {
+		req.Header.Set("X-API-Key", cfg.AgentKey)
+		req.Header.Set("Authorization", "Bearer "+cfg.AgentKey)
+	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)

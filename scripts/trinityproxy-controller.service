@@ -5,15 +5,25 @@ Wants=network.target
 
 [Service]
 Type=simple
-User=root
+User=trinityproxy
+Group=trinityproxy
 WorkingDirectory=/root/TrinityProxy
 Environment=TRINITY_ROLE=controller
-Environment=PATH=/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-ExecStart=/usr/local/go/bin/go run ./cmd/api/enhanced_main.go
+Environment=TRINITY_NONINTERACTIVE=1
+Environment=DB_PATH=/var/lib/trinityproxy/trinityproxy.db
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/root/TrinityProxy/build/trinityproxy-api
 Restart=always
 RestartSec=5
 StandardOutput=journal
 StandardError=journal
+
+# Hardening (WorkingDirectory may live under /root on fresh VPS installs)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/trinityproxy
+ReadOnlyPaths=/root/TrinityProxy/build
 
 [Install]
 WantedBy=multi-user.target

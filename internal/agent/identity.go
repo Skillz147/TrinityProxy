@@ -8,19 +8,86 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
+
+	geopkg "github.com/Skillz147/TrinityProxy/internal/geo"
+	"github.com/Skillz147/TrinityProxy/internal/logutil"
+	"github.com/Skillz147/TrinityProxy/internal/proxy"
 )
 
 type NodeMetadata struct {
-	IP       string `json:"ip"`
-	Port     int    `json:"port"`
-	Username string `json:"username"`
-	Password string `json:"password"`
-	Country  string `json:"country"`
-	Region   string `json:"region"`
-	City     string `json:"city"`
-	Zip      string `json:"zip"`
+	IP          string `json:"ip"`
+	Port        int    `json:"port"`
+	Username    string `json:"username"`
+	Password    string `json:"password"`
+	Country     string `json:"country"`
+	Region      string `json:"region"`
+	City        string `json:"city"`
+	Zip         string `json:"zip"`
+	Platform    string `json:"platform"`
+	DeviceClass string `json:"device_class"`
+	NetworkType string `json:"network_type"`
+}
+
+// detectPlatform maps runtime.GOOS to a supported platform label.
+// Mobile platforms are intentionally excluded and reported as unknown.
+func detectPlatform() string {
+	return platformFromGOOS(runtime.GOOS)
+}
+
+func platformFromGOOS(goos string) string {
+	switch goos {
+	case "linux", "windows", "darwin":
+		return goos
+	default:
+		return "unknown"
+	}
+}
+
+// detectDeviceClass returns device class from TRINITY_DEVICE_CLASS or heuristics.
+func detectDeviceClass() string {
+	if v := strings.TrimSpace(os.Getenv("TRINITY_DEVICE_CLASS")); v != "" {
+		switch strings.ToLower(v) {
+		case "vps", "desktop", "unknown":
+			return strings.ToLower(v)
+		}
+	}
+	switch runtime.GOOS {
+	case "darwin", "windows":
+		return "desktop"
+	case "linux":
+		if inContainer() {
+			return "vps"
+		}
+	}
+	return "unknown"
+}
+
+// detectNetworkType returns network type from TRINITY_NETWORK_TYPE or unknown.
+func detectNetworkType() string {
+	if v := strings.TrimSpace(os.Getenv("TRINITY_NETWORK_TYPE")); v != "" {
+		switch strings.ToLower(v) {
+		case "datacenter", "unknown":
+			return strings.ToLower(v)
+		}
+	}
+	return "unknown"
+}
+
+func inContainer() bool {
+	if _, err := os.Stat("/.dockerenv"); err == nil {
+		return true
+	}
+	data, err := os.ReadFile("/proc/1/cgroup")
+	if err != nil {
+		return false
+	}
+	s := string(data)
+	return strings.Contains(s, "docker") ||
+		strings.Contains(s, "containerd") ||
+		strings.Contains(s, "kubepods")
 }
 
 // readFile reads and trims content from a file
@@ -46,69 +113,48 @@ func getPublicIP() (string, error) {
 	return strings.TrimSpace(string(ip)), nil
 }
 
-// getGeoInfo gets location data for an IP with multiple fallback services
-func getGeoInfo(ip string) (map[string]string, error) {
-	// Try multiple geo services as fallbacks
-	geoServices := []struct {
-		name string
-		url  string
-	}{
+type geoService struct {
+	name string
+	url  string
+}
+
+type httpGetter interface {
+	Get(url string) (*http.Response, error)
+}
+
+var geoHTTPClient httpGetter = http.DefaultClient
+
+func defaultGeoServices(ip string) []geoService {
+	return []geoService{
 		{"ipapi.co", "https://ipapi.co/" + ip + "/json/"},
 		{"ip-api.com", "http://ip-api.com/json/" + ip},
 		{"ipinfo.io", "https://ipinfo.io/" + ip + "/json"},
 	}
+}
 
+// getGeoInfo gets location data for an IP with multiple fallback services.
+func getGeoInfo(ip string) (map[string]string, error) {
+	return fetchGeoInfo(defaultGeoServices(ip), geoHTTPClient)
+}
+
+func fetchGeoInfo(services []geoService, client httpGetter) (map[string]string, error) {
 	var lastError error
-	for _, service := range geoServices {
+	for _, service := range services {
 		fmt.Printf("[*] Trying geo service: %s\n", service.name)
 
-		resp, err := http.Get(service.url)
+		resp, err := client.Get(service.url)
 		if err != nil {
 			lastError = fmt.Errorf("%s failed: %v", service.name, err)
 			continue
 		}
-		defer resp.Body.Close()
 
-		var rawResult map[string]interface{}
-		if err := json.NewDecoder(resp.Body).Decode(&rawResult); err != nil {
-			lastError = fmt.Errorf("%s decode error: %v", service.name, err)
+		result, err := decodeGeoResponse(service.name, resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			lastError = err
 			continue
 		}
 
-		// Check for rate limiting or errors in response
-		if errorVal, exists := rawResult["error"]; exists {
-			if errorBool, ok := errorVal.(bool); ok && errorBool {
-				if reason, exists := rawResult["reason"]; exists {
-					lastError = fmt.Errorf("%s error: %v", service.name, reason)
-					continue
-				}
-			}
-		}
-
-		// Convert all values to strings safely
-		result := make(map[string]string)
-		for key, value := range rawResult {
-			if value != nil {
-				switch v := value.(type) {
-				case string:
-					result[key] = v
-				case bool:
-					if v {
-						result[key] = "true"
-					} else {
-						result[key] = "false"
-					}
-				case float64:
-					result[key] = strconv.FormatFloat(v, 'f', -1, 64)
-				default:
-					result[key] = fmt.Sprintf("%v", v)
-				}
-			} else {
-				result[key] = ""
-			}
-		}
-
-		// Check if we got valid geo data (multiple fallbacks)
 		if result["country_name"] != "" || result["country"] != "" || result["country_code"] != "" {
 			fmt.Printf("[+] Geo data retrieved from %s\n", service.name)
 			return result, nil
@@ -120,6 +166,63 @@ func getGeoInfo(ip string) (map[string]string, error) {
 	return nil, fmt.Errorf("all geo services failed, last error: %v", lastError)
 }
 
+func decodeGeoResponse(serviceName string, body io.Reader) (map[string]string, error) {
+	var rawResult map[string]interface{}
+	if err := json.NewDecoder(body).Decode(&rawResult); err != nil {
+		return nil, fmt.Errorf("%s decode error: %v", serviceName, err)
+	}
+
+	if errorVal, exists := rawResult["error"]; exists {
+		if errorBool, ok := errorVal.(bool); ok && errorBool {
+			if reason, exists := rawResult["reason"]; exists {
+				return nil, fmt.Errorf("%s error: %v", serviceName, reason)
+			}
+		}
+	}
+
+	result := make(map[string]string)
+	for key, value := range rawResult {
+		if value != nil {
+			switch v := value.(type) {
+			case string:
+				result[key] = v
+			case bool:
+				if v {
+					result[key] = "true"
+				} else {
+					result[key] = "false"
+				}
+			case float64:
+				result[key] = strconv.FormatFloat(v, 'f', -1, 64)
+			default:
+				result[key] = fmt.Sprintf("%v", v)
+			}
+		} else {
+			result[key] = ""
+		}
+	}
+
+	return result, nil
+}
+
+func embeddedSOCKSMode() bool {
+	return proxy.UseEmbedded()
+}
+
+func embeddedProxyCredentials() (port int, username, password string) {
+	if srv := proxy.Active(); srv != nil && srv.Port > 0 {
+		return srv.Port, srv.Username, srv.Password
+	}
+
+	port = proxy.SocksPort()
+	username = strings.TrimSpace(os.Getenv("TRINITY_SOCKS_USER"))
+	password = strings.TrimSpace(os.Getenv("TRINITY_SOCKS_PASSWORD"))
+	if username != "" && password != "" {
+		return port, username, password
+	}
+	return port, "dev", "dev"
+}
+
 // GatherMetadata builds the full metadata package
 func GatherMetadata() (*NodeMetadata, error) {
 	ip, err := getPublicIP()
@@ -127,9 +230,36 @@ func GatherMetadata() (*NodeMetadata, error) {
 		return nil, err
 	}
 
-	geo, err := getGeoInfo(ip)
+	geoData, err := getGeoInfo(ip)
 	if err != nil {
-		return nil, err
+		logutil.Component("agent").Warn("geo lookup failed, continuing with unknown location", "err", err)
+		geoData = map[string]string{}
+	}
+
+	rawCountry := getGeoField(geoData, "country_name", "country", "country_code")
+	region := getGeoField(geoData, "region", "region_code", "")
+	city := getGeoField(geoData, "city", "", "")
+	zip := getGeoField(geoData, "postal", "zip", "")
+
+	platform := detectPlatform()
+	deviceClass := detectDeviceClass()
+	networkType := detectNetworkType()
+
+	if embeddedSOCKSMode() {
+		port, username, password := embeddedProxyCredentials()
+		return &NodeMetadata{
+			IP:          ip,
+			Port:        port,
+			Username:    username,
+			Password:    password,
+			Country:     geopkg.NormalizeCountry(rawCountry),
+			Region:      region,
+			City:        city,
+			Zip:         zip,
+			Platform:    platform,
+			DeviceClass: deviceClass,
+			NetworkType: networkType,
+		}, nil
 	}
 
 	username, err := readFile("/etc/trinityproxy-username")
@@ -152,14 +282,17 @@ func GatherMetadata() (*NodeMetadata, error) {
 	}
 
 	return &NodeMetadata{
-		IP:       ip,
-		Port:     port,
-		Username: username,
-		Password: password,
-		Country:  getGeoField(geo, "country_name", "country", "country_code"),
-		Region:   getGeoField(geo, "region", "region_code", ""),
-		City:     getGeoField(geo, "city", "", ""),
-		Zip:      getGeoField(geo, "postal", "zip", ""),
+		IP:          ip,
+		Port:        port,
+		Username:    username,
+		Password:    password,
+		Country:     geopkg.NormalizeCountry(rawCountry),
+		Region:      region,
+		City:        city,
+		Zip:         zip,
+		Platform:    platform,
+		DeviceClass: deviceClass,
+		NetworkType: networkType,
 	}, nil
 }
 

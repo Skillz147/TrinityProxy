@@ -5,548 +5,482 @@
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Build Status](https://img.shields.io/badge/Build-Passing-brightgreen.svg)](Makefile)
 
-TrinityProxy is a sophisticated, distributed SOCKS5 proxy network management system designed for enterprise-scale deployments. It provides centralized control, automated deployment, health monitoring, and geographic routing capabilities for managing multiple SOCKS5 proxy servers across different VPS instances.
+TrinityProxy is a distributed SOCKS5 proxy network built on a **Controller–Agent** architecture. A central API registers agent nodes, tracks health via heartbeats and SOCKS probes, and exposes REST endpoints for discovery. Agents run SOCKS5 locally (Dante on Linux VPS, embedded Go SOCKS on macOS/Windows) and report metadata on a fixed interval.
 
-## 🏗️ Architecture Overview
-
-TrinityProxy operates on a **Controller-Agent** architecture:
-
-```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Controller    │    │    Agent VPS    │    │    Agent VPS    │
-│  (API Server)   │◄──►│  SOCKS5 Proxy   │    │  SOCKS5 Proxy   │
-│                 │    │   + Heartbeat   │    │   + Heartbeat   │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-         │                       │                       │
-         ▼                       ▼                       ▼
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│ SQLite Database │    │ Dante Server    │    │ Dante Server    │
-│  Node Registry  │    │ (port: random)  │    │ (port: random)  │
-│ Health Monitor  │    │ Auth: u_xxxx    │    │ Auth: u_xxxx    │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-```
-
-### Core Components
-
-#### 1. **Controller Node** (API Server)
-- **Purpose**: Central management hub for the entire proxy network
-- **Responsibilities**:
-  - RESTful API for proxy management
-  - Node registration and health monitoring  
-  - Geographic routing and load balancing
-  - Database management (SQLite)
-  - Real-time status reporting
-
-#### 2. **Agent Nodes** (SOCKS5 Proxies)
-- **Purpose**: Distributed proxy servers on VPS instances
-- **Responsibilities**:
-  - Dante SOCKS5 server installation and management
-  - Heartbeat reporting to controller
-  - Automatic credential generation
-  - System health monitoring
-  - Geographic metadata collection
-
-#### 3. **Database Layer**
-- **Technology**: SQLite with automatic schema management
-- **Data Stored**:
-  - Node registration details
-  - Geographic information (IP geolocation)
-  - Health status and uptime metrics
-  - Authentication credentials
-  - Performance statistics
-
-## 🚀 Quick Start
-
-### Prerequisites
-- **Go 1.24.3+** (for building from source)
-- **Linux VPS** with root access (for agents)
-- **SQLite3** (automatically installed)
-- **Dante SOCKS5 Server** (automatically installed)
-
-### One-Command VPS Setup
-
-```bash
-# Complete VPS setup from scratch (includes Go installation)
-git clone https://github.com/Skillz147/TrinityProxy.git
-cd TrinityProxy
-make vps-setup
-```
-
-This single command will:
-1. ✅ Install system dependencies (Go, Dante SOCKS5, build tools)
-2. ✅ Check all dependencies
-3. ✅ Install Go modules
-4. ✅ Build all binaries
-5. ✅ Prepare the VPS environment
-
-### Development Setup (if Go is already installed)
-
-```bash
-# Quick setup when Go is already available
-git clone https://github.com/Skillz147/TrinityProxy.git
-cd TrinityProxy
-make quickstart
-```
-
-## 📋 Installation & Deployment
-
-### Controller Setup (Management Server)
-
-```bash
-# 1. Quick setup
-make quickstart
-
-# 2. Start controller
-make run-controller
-# OR with environment variable
-TRINITY_ROLE=controller make run
-```
-
-The controller will start an API server on port `8080` with the following endpoints:
-
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/nodes` | GET | List all registered proxy nodes |
-| `/nodes` | POST | Register a new proxy node |
-| `/nodes/{id}` | GET | Get specific node details |
-| `/nodes/{id}/heartbeat` | POST | Update node health status |
-| `/health` | GET | Controller health check |
-
-### Agent Setup (VPS Proxy Servers)
-
-```bash
-# 1. On each VPS, clone and setup
-git clone https://github.com/Skillz147/TrinityProxy.git
-cd TrinityProxy
-make quickstart
-
-# 2. Install system dependencies (requires sudo)
-sudo make install
-
-# 3. Start agent
-make run-agent
-# OR with environment variable  
-TRINITY_ROLE=agent make run
-```
-
-The agent will:
-1. 🔧 Install and configure Dante SOCKS5 server
-2. 🎲 Generate random credentials and port (20000-59999)
-3. 📡 Start heartbeat reporting to controller
-4. 🌍 Collect geographic metadata
-5. ✅ Report health status continuously
-
-## 🎛️ Interactive Configuration
-
-TrinityProxy features an intelligent configuration system:
-
-```bash
-# Interactive role selection
-make run
-
-# Example output:
-[*] Current TRINITY_ROLE: agent
-[?] Use existing role? (Y/n): n
-[*] Overriding existing role...
-
-Please select your role:
-1. Controller (API Server for managing proxy nodes)
-2. Agent (SOCKS5 Proxy + Heartbeat reporting)  
-3. View current environment settings
-4. Clear current environment settings
-
-Enter choice (1-4): 2
-```
-
-### Environment Management Features
-
-- **Automatic Detection**: Recognizes existing environment variables
-- **Override Capability**: Always allows changing roles
-- **Shell Integration**: Auto-detects bash/zsh/fish and offers persistence
-- **Session Management**: Maintains settings across terminal sessions
-
-## 🔧 Development Workflow
-
-### Building Components
-
-```bash
-# Build everything
-make build
-
-# Individual components
-make $(BUILD_DIR)/trinityproxy  # Main binary
-make $(BUILD_DIR)/installer     # Agent installer
-make $(BUILD_DIR)/api          # Controller API server
-```
-
-### Development with Auto-Restart
-
-```bash
-# Terminal 1: Controller with auto-restart
-make dev-controller
-
-# Terminal 2: Agent with auto-restart  
-make dev-agent
-```
-
-### Code Quality
-
-```bash
-make format  # Format Go code
-make lint    # Run linter (requires golangci-lint)
-make test    # Run test suite
-```
-
-## 🌐 Network Operations
-
-### Proxy Usage
-
-Once an agent is running, you can use the SOCKS5 proxy:
-
-```bash
-# Example: Using curl through the proxy
-curl --socks5 username:password@vps-ip:port http://httpbin.org/ip
-
-# Example: Using with applications
-export SOCKS_PROXY="socks5://username:password@vps-ip:port"
-```
-
-### Health Monitoring
-
-```bash
-# Check controller status
-curl http://controller-ip:8080/health
-
-# List all nodes
-curl http://controller-ip:8080/nodes
-
-# Get specific node details
-curl http://controller-ip:8080/nodes/{node-id}
-```
-
-## 📊 Node Management
-
-### Automatic Node Registration
-
-When an agent starts, it automatically:
-
-1. **Generates Unique Credentials**
-   ```go
-   username := "u_" + randomHex(4)    // e.g., u_a1b2c3d4
-   password := randomHex(12)          // e.g., 1a2b3c4d5e6f7g8h9i0j1k2l
-   port := random(20000, 59999)       // e.g., 45023
-   ```
-
-2. **Collects System Metadata**
-   ```json
-   {
-     "ip": "203.0.113.1",
-     "port": 45023,
-     "country": "United States", 
-     "city": "New York",
-     "last_heartbeat": "2025-08-01T12:00:00Z",
-     "status": "healthy"
-   }
-   ```
-
-3. **Registers with Controller**
-   - Sends heartbeat every 30 seconds
-   - Reports system health metrics
-   - Updates geographic information
-
-### Geographic Routing
-
-The controller supports filtering nodes by geographic criteria:
-
-```bash
-# Get nodes in specific country
-curl "http://controller:8080/nodes?country=United%20States"
-
-# Get nodes in specific city
-curl "http://controller:8080/nodes?city=New%20York"
-```
-
-## 🔐 Security Features
-
-### Authentication System
-- **Random Credential Generation**: Each agent creates unique username/password
-- **Secure Storage**: Credentials stored in `/etc/trinityproxy-*` with 600 permissions
-- **No Default Passwords**: Every installation has unique authentication
-
-### Network Security
-- **Private API Communication**: Controller-agent communication on internal networks
-- **Port Randomization**: SOCKS5 ports are randomly assigned (20000-59999)
-- **Access Control**: Dante configuration allows controlled access patterns
-
-### File Permissions
-```bash
-/etc/trinityproxy-username  # 600 (owner read/write only)
-/etc/trinityproxy-password  # 600 (owner read/write only)  
-/etc/trinityproxy-port     # 600 (owner read/write only)
-/etc/danted.conf           # 644 (world readable, owner writable)
-```
-
-## 🛠️ Troubleshooting
-
-### Common Issues
-
-#### 1. **Agent Won't Start**
-```bash
-# Check system dependencies
-make check-deps
-
-# Install missing dependencies
-sudo make install
-
-# Check Dante service status
-sudo systemctl status trinityproxy
-sudo journalctl -u trinityproxy -f
-```
-
-#### 2. **Controller Connection Issues**
-```bash
-# Verify controller is running
-curl http://controller-ip:8080/health
-
-# Check agent heartbeat logs
-tail -f /var/log/trinityproxy-agent.log
-```
-
-#### 3. **SOCKS5 Connection Fails**
-```bash
-# Test local SOCKS5 server
-curl --socks5 127.0.0.1:$(cat /etc/trinityproxy-port) http://httpbin.org/ip
-
-# Check Dante logs
-sudo tail -f /var/log/danted.log
-```
-
-### Diagnostic Commands
-
-```bash
-# Project status
-make status
-
-# Version information  
-make version
-
-# Clean rebuild
-make clean && make build
-
-# Full system check
-make check-deps
-```
-
-## 📁 Project Structure
-
-```
-TrinityProxy/
-├── main.go                    # Entry point with role selection
-├── go.mod                     # Go module definition
-├── Makefile                   # Build and deployment automation
-├── README.md                  # This documentation
-│
-├── cmd/                       # Executable commands
-│   ├── api/
-│   │   └── enhanced_main.go   # Controller API server
-│   └── installer/
-│       └── installer.go       # Agent SOCKS5 installer
-│
-├── internal/                  # Internal packages
-│   ├── agent/
-│   │   ├── heartbeat.go       # Heartbeat reporting system
-│   │   └── identity.go        # Geographic metadata collection  
-│   └── storage/
-│       └── database.go        # SQLite node management
-│
-└── scripts/                   # Deployment scripts
-    ├── setup.sh              # Basic setup script
-    └── setup_api.sh          # API server setup
-```
-
-## 🔄 Deployment Scenarios
-
-### Scenario 1: Single Controller + Multiple Agents
-
-```bash
-# Controller Server (e.g., your main server)
-git clone https://github.com/Skillz147/TrinityProxy.git
-cd TrinityProxy  
-make vps-setup
-make setup-api-controller  # Optional: Setup with SSL/NGINX
-
-# Agent VPS #1 (e.g., US East Coast)
-git clone https://github.com/Skillz147/TrinityProxy.git
-cd TrinityProxy
-make vps-setup
-CONTROLLER_URL=http://controller-ip:8080 make run-agent
-
-# Agent VPS #2 (e.g., EU West)  
-git clone https://github.com/Skillz147/TrinityProxy.git
-cd TrinityProxy
-make vps-setup
-CONTROLLER_URL=http://controller-ip:8080 make run-agent
-```
-
-### Scenario 2: Development Environment
-
-```bash
-# Terminal 1: Controller with auto-restart
-make dev-controller
-
-# Terminal 2: Local agent for testing
-make dev-agent
-
-# Terminal 3: Monitor logs
-tail -f /var/log/trinityproxy-*.log
-```
-
-### Scenario 3: Production Deployment
-
-```bash
-# Use deployment helper
-make deploy-vps VPS_HOST=root@your-vps.com
-
-# Or manual deployment with monitoring
-ssh root@vps "cd TrinityProxy && make run-agent &"
-```
-
-## 🔧 Production Service Management
-
-### One-Command VPS Setup
-
-TrinityProxy features intelligent, fully automated VPS deployment:
-
-```bash
-# Complete VPS setup (everything automated)
-git clone https://github.com/Skillz147/TrinityProxy.git
-cd TrinityProxy
-make vps-setup
-
-# Start controller (auto-installs nginx, SSL, systemd service)
-make run-controller
-
-# OR start agent (auto-installs dependencies)
-make run-agent
-```
-
-### What `make run-controller` Does Automatically
-
-When you run `make run-controller` on a VPS, it intelligently:
-
-- ✅ **Detects VPS environment** (Linux with systemd)
-- ✅ **Configures nginx + SSL** (if not already setup)
-- ✅ **Installs systemd service** (if not already installed)
-- ✅ **Starts background service** with auto-restart
-- ✅ **Enables boot startup** automatically
-- ✅ **Provides management commands**
-
-### Service Management Commands
-
-Once installed, manage your TrinityProxy service with:
-
-```bash
-# Check service status
-sudo systemctl status trinityproxy-controller
-
-# View live logs
-sudo journalctl -u trinityproxy-controller -f
-
-# Service control
-sudo systemctl start trinityproxy-controller     # Start
-sudo systemctl stop trinityproxy-controller      # Stop  
-sudo systemctl restart trinityproxy-controller   # Restart
-sudo systemctl enable trinityproxy-controller    # Enable auto-start
-sudo systemctl disable trinityproxy-controller   # Disable auto-start
-```
-
-### Service Features
-
-- **Auto-Recovery**: Automatically restarts on crashes
-- **Boot Integration**: Starts on system boot
-- **Logging**: Integrated with systemd journal
-- **Resource Management**: Proper process isolation
-- **Security**: Runs with appropriate permissions
-
-### API Endpoints (Background Service)
-
-Once the service is running, your API will be available at:
-
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `https://api.sauronstore.com/api/heartbeat` | POST | Agent heartbeat registration |
-| `https://api.sauronstore.com/api/nodes` | GET | List all proxy nodes |
-| `https://api.sauronstore.com/api/health` | GET | Controller health check |
-
-**Example heartbeat request:**
-```bash
-curl -X POST https://api.sauronstore.com/api/heartbeat \
-  -H "Content-Type: application/json" \
-  -d '{
-    "ip": "1.2.3.4",
-    "port": 1080,
-    "username": "proxy_user",
-    "password": "proxy_pass",
-    "country": "US",
-    "region": "California", 
-    "city": "San Francisco",
-    "zip": "94102"
-  }'
-```
-
-## 🎯 Use Cases
-
-### 1. **Web Scraping Networks**
-- Deploy agents across multiple geographic regions
-- Route requests through different IP addresses
-- Automatic failover when nodes go offline
-
-### 2. **Privacy & Security**
-- Personal VPN alternative with multiple exit points
-- Rotating proxy endpoints for enhanced anonymity
-- Geographic IP diversity for accessing region-locked content
-
-### 3. **Load Testing & Development**
-- Simulate traffic from different geographic locations
-- Test applications under various network conditions
-- Distributed load testing capabilities
-
-### 4. **Enterprise Proxy Management**
-- Centralized control of multiple proxy servers
-- Health monitoring and automatic replacement
-- Geographic routing and load balancing
-
-## 🤝 Contributing
-
-1. **Fork** the repository
-2. **Create** a feature branch (`git checkout -b feature/amazing-feature`)
-3. **Commit** your changes (`git commit -m 'Add amazing feature'`)
-4. **Push** to the branch (`git push origin feature/amazing-feature`)
-5. **Open** a Pull Request
-
-### Development Guidelines
-
-- Follow Go best practices and formatting (`make format`)
-- Run tests before submitting (`make test`)
-- Update documentation for new features
-- Use descriptive commit messages
-
-## 📝 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-- **Dante SOCKS5 Server** - The backbone SOCKS5 implementation
-- **SQLite** - Reliable embedded database
-- **Go Community** - Excellent ecosystem and libraries
-
-## 📞 Support
-
-- **Issues**: [GitHub Issues](https://github.com/Skillz147/TrinityProxy/issues)
-- **Documentation**: This README and inline code comments
-- **Build System**: Run `make help` for all available commands
+**Implementation status and backlog:** [ROADMAP.md](ROADMAP.md) · [MISSING_COMPONENTS.md](MISSING_COMPONENTS.md)
 
 ---
 
-**TrinityProxy** - *Building the future of distributed proxy networks* 🚀
+## Architecture Overview
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                         Controller VPS (production)                      │
+│                                                                          │
+│  ┌─────────────────┐   ┌─────────────────┐   ┌─────────────────────┐  │
+│  │  Dashboard UI   │   │  Dashboard API  │   │   Controller API    │  │
+│  │    :8080 *      │──►│     :8081       │   │       :3100           │  │
+│  │  (Vite dev)     │   │  (admin/auth)   │   │  (nodes/heartbeat)  │  │
+│  └─────────────────┘   └─────────────────┘   └─────────────────────┘  │
+│           │                     │                        │               │
+│           └─────────────────────┴────────────────────────┘               │
+│                                 │                                        │
+│                          Caddy :443 (TLS)                                │
+│              api.example.com → :3100    example.com → :8081              │
+└──────────────────────────────────────────────────────────────────────────┘
+          ▲ heartbeat + SOCKS probes                    ▲ heartbeats
+          │                                             │
+┌─────────┴─────────┐                         ┌─────────┴─────────┐
+│   Linux Agent VPS │                         │  macOS / Windows  │
+│  Dante SOCKS5     │                         │  Embedded SOCKS5  │
+│  + systemd        │                         │  (Go, no Dante)   │
+└───────────────────┘                         └───────────────────┘
+```
+
+\* In production, Caddy serves the built dashboard on your apex domain (`:8081` upstream). During local dev, Vite runs on `:8080` and proxies `/api` to the dashboard API on `:8081`.
+
+### Core components
+
+| Component | Port | Role |
+|-----------|------|------|
+| **Dashboard UI** | `:8080` (dev) | React admin UI — agents, settings, SSL provisioning |
+| **Dashboard API** | `:8081` | Auth, deployment settings, stats, Cloudflare SSL orchestration |
+| **Controller API** | `:3100` | Node registry, heartbeats, SOCKS health probes, `/api/nodes*` |
+| **Agent (Linux)** | random `20000–59999` | Dante SOCKS5 + systemd heartbeat |
+| **Agent (macOS/Windows)** | `:1080` default | Embedded Go SOCKS5 + heartbeat |
+| **Database** | — | SQLite — `trinityproxy.db` (nodes), `dashboard.db` (auth/settings) |
+
+---
+
+## Quick Start (development)
+
+### Prerequisites
+
+- **Go 1.24.3+**
+- **Node.js 18+** (dashboard UI)
+- **Linux VPS with root** (production agents only; macOS/Windows use embedded SOCKS)
+
+```bash
+git clone https://github.com/Skillz147/TrinityProxy.git
+cd TrinityProxy
+make quickstart
+```
+
+### 1. Dashboard — one command
+
+```bash
+make start
+# Open http://localhost:8080
+```
+
+Press **Ctrl+C** or run `make stop` when done.
+
+**First time:**
+
+1. `make start` — creates your admin login (credentials printed once)
+2. Log in and **change your password** (required on first login)
+3. **Settings** → enter your domain → **Save**
+4. **Deploy Agent** → copy the install command for your platform
+
+The dashboard runs a Go API on `:8081` and Vite on `:8080`. Agent keys sync to `.env.controller` automatically when configured.
+
+See [docs/DEV_SETUP.md](docs/DEV_SETUP.md) for split-terminal and mkcert options.
+
+### 2. Controller API
+
+```bash
+make start-controller
+# equivalent: make sync-agent-key && make run-controller
+```
+
+Listens on **`:3100`**. Loads `TRINITY_AGENT_KEY` from `.env.controller` when present.
+
+```bash
+curl http://localhost:3100/health
+curl http://localhost:3100/metrics
+curl -H "Authorization: Bearer $TRINITY_API_KEY" http://localhost:3100/api/nodes
+```
+
+### 3. Local agent (macOS)
+
+Dante and systemd are Linux-only. On macOS, use embedded SOCKS in the foreground:
+
+```bash
+# Terminal 1
+make start-controller
+
+# Terminal 2
+make run-agent-dev
+```
+
+`make run-agent-dev` sets `TRINITY_SKIP_INSTALLER=1`, starts embedded SOCKS5 on **`:1080`** (`dev`/`dev` by default), and heartbeats to `http://127.0.0.1:3100`.
+
+For a persistent macOS agent, use `make install-agent-macos` — see [Agent platforms](#agent-platforms) below.
+
+---
+
+## Production deployment (VPS)
+
+### Controller host
+
+```bash
+# On your VPS
+git clone https://github.com/Skillz147/TrinityProxy.git
+cd TrinityProxy
+make quickstart
+make install-service          # systemd: trinityproxy-controller → :3100
+sudo systemctl start trinityproxy-controller
+```
+
+> **Note:** `make vps-setup` installs dependencies and the controller systemd unit only. It does **not** configure TLS. Use the dashboard Cloudflare SSL flow or the Caddy scripts below for HTTPS.
+
+### Dashboard + SSL (recommended)
+
+1. Run the dashboard on the VPS (or tunnel to it during setup):
+
+   ```bash
+   make build-dashboard
+   DASHBOARD_PORT=8081 ./build/trinityproxy-dashboard
+   ```
+
+   For production, serve the built UI from the dashboard binary or place `web/dashboard/dist` behind Caddy on `:8081`.
+
+2. Open the dashboard → **Settings**:
+   - Set your **public domain** (e.g. `example.com`)
+   - Save deployment settings (generates `TRINITY_AGENT_KEY`)
+
+3. **Settings → Cloudflare SSL** modal:
+   - Create proxied (**orange cloud**) **A** records:
+     - `api.example.com` → your VPS IP
+     - `example.com` → your VPS IP (dashboard apex)
+   - Create a Cloudflare API token with **Zone → DNS → Edit**
+   - Paste the token and provision — Caddy issues a **DNS-01 wildcard** cert for `*.example.com` and `example.com`
+
+4. Sync the agent key to the controller:
+
+   ```bash
+   make sync-agent-key
+   # Add TRINITY_AGENT_KEY to /etc/systemd/system/trinityproxy-controller.service, then:
+   sudo systemctl daemon-reload && sudo systemctl restart trinityproxy-controller
+   ```
+
+### SSL without the dashboard (Caddy scripts)
+
+TrinityProxy uses **Caddy only** — no nginx or certbot in the default path.
+
+| Script | Use case |
+|--------|----------|
+| `scripts/setup-ssl-caddy-cloudflare.sh` | **Production** — Cloudflare DNS-01 wildcard; proxied A records OK |
+| `scripts/setup-ssl-caddy.sh` | Simple HTTP-01; requires **grey cloud** during initial issuance |
+
+Cloudflare DNS-01 (wildcard + orange cloud):
+
+```bash
+sudo PUBLIC_DOMAIN=example.com CLOUDFLARE_API_TOKEN=... SERVER_IP=203.0.113.10 \
+  EMAIL=ssl@example.com SKIP_DNS_WAIT=1 ./scripts/setup-ssl-caddy-cloudflare.sh
+```
+
+DNS checklist: [scripts/setup-cloudflare-dns.md](scripts/setup-cloudflare-dns.md)
+
+After HTTPS is live, agents use `CONTROLLER_URL=https://api.example.com`.
+
+### Deploy agents
+
+From the dashboard **Deploy Agent** page, copy the platform-specific command. Summary:
+
+| Platform | Command / script |
+|----------|------------------|
+| **Linux VPS** | `scripts/install-agent-service.sh` or curl bootstrap from Deploy page |
+| **macOS** | `make install-agent-macos` or `scripts/install-agent-macos.sh` |
+| **Windows** | `make build-windows-agent` → run `scripts/install-agent-windows.ps1` as Administrator |
+| **Docker (Mac dev)** | `make docker-agent` |
+
+---
+
+## Agent platforms
+
+### Linux VPS (production)
+
+Installs Dante SOCKS5, generates credentials, registers a systemd service:
+
+```bash
+sudo CONTROLLER_URL=https://api.example.com TRINITY_AGENT_KEY=<key> \
+  ./scripts/install-agent-service.sh
+```
+
+Or use the one-liner from the dashboard **Deploy Agent** page (curl bootstrap).
+
+`make run-agent` on Linux performs the same setup interactively.
+
+### macOS
+
+**Dev (foreground):** `make run-agent-dev` — embedded SOCKS on `:1080`, no install.
+
+**Persistent (launchd):**
+
+```bash
+make build
+CONTROLLER_URL=https://api.example.com TRINITY_AGENT_KEY=<key> make install-agent-macos
+```
+
+### Windows
+
+1. **Build** the agent binary (on any machine with Go):
+
+   ```bash
+   make build-windows-agent   # → build/trinityproxy.exe
+   ```
+
+2. Copy `trinityproxy.exe` (and optionally the repo) to the Windows PC.
+
+3. **Run the installer as Administrator** — the PowerShell script installs the Windows service and configures it to talk to your controller; `trinityproxy.exe` is the agent binary the script installs:
+
+   ```powershell
+   $env:CONTROLLER_URL = "https://api.example.com"
+   $env:TRINITY_AGENT_KEY = "<key-from-dashboard>"
+   .\scripts\install-agent-windows.ps1
+   ```
+
+   The `.ps1` installer copies `trinityproxy.exe` to `C:\Program Files\TrinityProxy`, writes environment config, and registers the **TrinityProxyAgent** Windows service with embedded SOCKS5.
+
+Full guide: [docs/WINDOWS_AGENT.md](docs/WINDOWS_AGENT.md)
+
+---
+
+## Health: Online vs Healthy
+
+The dashboard and API track two independent states:
+
+| State | Meaning |
+|-------|---------|
+| **Online** | Agent sent a heartbeat within the last **5 minutes** (`is_online`) |
+| **Healthy** | Controller completed a **SOCKS5 TCP connect + username/password auth** probe to the node's reported `ip:port` (`is_healthy`) |
+
+A node can be **online but unhealthy** (heartbeat works, SOCKS unreachable or bad credentials).
+
+### How probes work
+
+- After each heartbeat and on a background interval (`PROBE_INTERVAL`, default **60s**), the controller probes each online node.
+- `GET /api/nodes/random` returns only nodes that are both online **and** SOCKS-healthy (results cached 30s per node).
+- Failed probes increment `probe_failures` in `GET /metrics`.
+
+### Dev (same machine) vs production (NAT)
+
+| Environment | Probe behavior |
+|-------------|----------------|
+| **Local dev** | When `TRINITY_ENV` is not `production`/`prod` and `TRINITY_NONINTERACTIVE` is unset, probes **retry via `127.0.0.1`** if the agent's public WAN IP is unreachable locally (no NAT hairpin needed). This is why `make run-agent-dev` on the same Mac as the controller shows **Healthy**. |
+| **Production** | `TRINITY_NONINTERACTIVE=1` (systemd) or `TRINITY_ENV=production` disables local fallback. Probes connect to the agent's **public IP only** — the SOCKS port must be reachable from the controller (open firewall, no CGNAT-only egress without port forwarding). |
+
+---
+
+## Controller API reference
+
+| Endpoint | Method | Auth | Purpose |
+|----------|--------|------|---------|
+| `/api/heartbeat` | POST | Agent key | Agent heartbeat / registration |
+| `/api/nodes` | GET | API key | List online nodes (no passwords) |
+| `/api/nodes/admin` | GET | Admin key | Full credentials |
+| `/api/nodes/country?country=US` | GET | API key | Filter by country |
+| `/api/nodes/random` | GET | API key | Random SOCKS-healthy online node |
+| `/health` | GET | — | Controller health |
+| `/metrics` | GET | — | JSON counters |
+
+Example heartbeat:
+
+```bash
+curl -X POST http://localhost:3100/api/heartbeat \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: $TRINITY_AGENT_KEY" \
+  -d '{"ip":"203.0.113.1","port":45023,"username":"u_abc","password":"secret","country":"US"}'
+```
+
+There is **no CLI client** in the repository. Use `curl` or your own client.
+
+### Using a proxy node
+
+```bash
+curl --socks5 username:password@vps-ip:port http://httpbin.org/ip
+export SOCKS_PROXY="socks5://username:password@vps-ip:port"
+```
+
+---
+
+## Environment variables
+
+### Controller API
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CONTROLLER_URL` | — | Base URL agents use (set in dashboard Settings or env) |
+| `API_PORT` | `3100` | Controller listen port |
+| `DB_PATH` | `./trinityproxy.db` | Node registry SQLite path |
+| `HEARTBEAT_INTERVAL` | `60s` | Agent heartbeat interval (agents read this too) |
+| `PROBE_INTERVAL` | `60s` | Background SOCKS health probe interval |
+| `TRINITY_API_KEY` | — | Client auth for `GET /api/nodes*` |
+| `TRINITY_AGENT_KEY` | — | Agent auth for `POST /api/heartbeat` |
+| `TRINITY_ADMIN_KEY` | — | Admin export; falls back to `TRINITY_API_KEY` |
+| `TRINITY_ENV` | — | `production` or `prod` disables dev probe fallback |
+| `TRINITY_NONINTERACTIVE` | — | `1` skips prompts; enables production probe mode |
+| `LOG_FORMAT` | `json` | Set `text` for human-readable logs |
+
+When `TRINITY_API_KEY` or `TRINITY_AGENT_KEY` is unset, the controller logs a warning and allows those endpoints without auth. **Set both before exposing to any network.**
+
+```bash
+openssl rand -hex 32   # TRINITY_API_KEY
+openssl rand -hex 32   # TRINITY_AGENT_KEY (different value)
+```
+
+### Dashboard
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DASHBOARD_PORT` | `8081` | Dashboard API bind port |
+| `DASHBOARD_BIND_ADDR` | `0.0.0.0` | Dashboard API bind address |
+| `DASHBOARD_DB_PATH` | `./dashboard.db` | Auth and settings SQLite |
+| `DASHBOARD_URL` | `http://localhost:8080` | Public URL for links/redirects |
+| `DASHBOARD_DEV_PROXY` | `false` | Go process proxies Vite when `true` |
+| `DASHBOARD_SESSION_TTL` | `24h` | Login session lifetime |
+| `DASHBOARD_ADMIN_USERNAME` | `admin` | Bootstrap admin username |
+| `SERVER_PUBLIC_IP` | auto | VPS public IP for Cloudflare DNS hints |
+
+### Agent
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TRINITY_ROLE` | — | `controller` or `agent` |
+| `TRINITY_SKIP_INSTALLER` | — | `1` = embedded Go SOCKS (macOS/Windows/dev) |
+| `TRINITY_SOCKS_PORT` | `1080` | Embedded SOCKS listen port |
+| `TRINITY_SOCKS_USER` | auto | Override SOCKS username |
+| `TRINITY_SOCKS_PASSWORD` | auto | Override SOCKS password |
+| `TRINITY_DEVICE_CLASS` | auto | Dashboard label: `desktop`, `vps`, `macos`, … |
+| `TRINITY_NETWORK_TYPE` | — | Optional network label in heartbeat |
+| `TRINITY_DATA_DIR` | install dir | Credential file location (Windows/macOS) |
+| `TRINITY_ROOT` | — | Override path to `build/` binaries |
+
+Bridge dashboard → controller:
+
+```bash
+make sync-agent-key    # writes TRINITY_AGENT_KEY to .env.controller
+```
+
+---
+
+## Building
+
+```bash
+make build
+```
+
+| Binary | Path |
+|--------|------|
+| Role router (agent/controller) | `build/trinityproxy` |
+| Agent installer (Dante) | `build/installer` |
+| Controller API | `build/trinityproxy-api` |
+| Dashboard API | `build/trinityproxy-dashboard` |
+| Windows agent | `build/trinityproxy.exe` |
+
+---
+
+## Systemd services
+
+```bash
+make install-service          # controller → trinityproxy-controller
+make install-agent-service    # agent → trinityproxy-agent
+
+sudo systemctl status trinityproxy-controller
+sudo journalctl -u trinityproxy-agent -f
+```
+
+Set `TRINITY_AGENT_KEY` and `CONTROLLER_URL` in the service unit before install when the controller requires heartbeat auth.
+
+---
+
+## Security
+
+- Each agent generates unique username/password (Linux: `/etc/trinityproxy-*` mode `600`; Windows/macOS: install directory)
+- SOCKS ports are randomized on Linux (20000–59999); embedded agents default to `:1080`
+- Public GET endpoints omit passwords; use `GET /api/nodes/admin` with an admin key for exports
+- Set `TRINITY_API_KEY` and `TRINITY_AGENT_KEY` in production; `/health` and `/metrics` remain open
+- Dante template requires username auth only
+
+---
+
+## Project structure
+
+```
+TrinityProxy/
+├── main.go                         # Role router; embedded SOCKS on agent
+├── cmd/
+│   ├── api/enhanced_main.go        # Controller API (:3100)
+│   ├── dashboard/main.go           # Dashboard API (:8081)
+│   └── installer/installer.go      # Dante + credential setup (Linux)
+├── internal/
+│   ├── config/                     # Env-based configuration
+│   ├── dashboard/                  # Auth, stats, deployment, Cloudflare SSL
+│   ├── proxy/                      # Embedded Go SOCKS5 server
+│   ├── health/                     # SOCKS probes + background prober
+│   └── storage/                    # SQLite node registry
+├── web/dashboard/                  # React admin UI (Vite)
+├── scripts/                        # Caddy SSL, systemd, agent installers
+├── docs/DEV_SETUP.md
+├── docs/WINDOWS_AGENT.md
+├── ROADMAP.md
+└── MISSING_COMPONENTS.md
+```
+
+---
+
+## Troubleshooting
+
+```bash
+make check-deps
+make status
+make dashboard-up               # check :8080 and :8081
+sudo systemctl status trinityproxy-controller
+sudo journalctl -u trinityproxy-agent -f
+sudo tail -f /var/log/danted.log   # Linux Dante logs
+make clean && make build
+```
+
+| Symptom | Check |
+|---------|-------|
+| Agent online but unhealthy (prod) | Firewall on agent VPS; SOCKS port reachable from controller |
+| Agent online but unhealthy (dev) | Use `make run-agent-dev` on same machine; dev probe fallback is automatic |
+| Heartbeat 401 | `TRINITY_AGENT_KEY` mismatch — run `make sync-agent-key` |
+| Dashboard can't reach controller | `CONTROLLER_URL` in Settings; controller running on `:3100` |
+
+---
+
+## Development
+
+```bash
+make format
+make lint
+make test
+make dev-controller
+make dev-agent
+```
+
+Full local setup: [docs/DEV_SETUP.md](docs/DEV_SETUP.md)
+
+---
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Run `make format` and `make test`
+4. Update docs for behavior changes
+5. Open a Pull Request
+
+---
+
+## License
+
+MIT License — see [LICENSE](LICENSE).
+
+## Support
+
+- **Issues:** [GitHub Issues](https://github.com/Skillz147/TrinityProxy/issues)
+- **Roadmap:** [ROADMAP.md](ROADMAP.md)
+- **Commands:** `make help`

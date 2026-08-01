@@ -4,10 +4,16 @@ package storage
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/Skillz147/TrinityProxy/internal/geo"
 	_ "github.com/mattn/go-sqlite3"
 )
+
+const nodeSelectColumns = `id, ip, port, username, password, country, region, city, zip,
+	       platform, device_class, network_type,
+	       is_online, last_seen, created_at, updated_at, is_healthy, last_probe_at`
 
 type ProxyNode struct {
 	ID        string    `json:"id" db:"id"`
@@ -18,10 +24,16 @@ type ProxyNode struct {
 	Country   string    `json:"country" db:"country"`
 	Region    string    `json:"region" db:"region"`
 	City      string    `json:"city" db:"city"`
-	IsOnline  bool      `json:"is_online" db:"is_online"`
-	LastSeen  time.Time `json:"last_seen" db:"last_seen"`
-	CreatedAt time.Time `json:"created_at" db:"created_at"`
-	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
+	Zip         string `json:"zip" db:"zip"`
+	Platform    string `json:"platform" db:"platform"`
+	DeviceClass string `json:"device_class" db:"device_class"`
+	NetworkType string `json:"network_type" db:"network_type"`
+	IsOnline    bool       `json:"is_online" db:"is_online"`
+	LastSeen    time.Time  `json:"last_seen" db:"last_seen"`
+	CreatedAt   time.Time  `json:"created_at" db:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at" db:"updated_at"`
+	IsHealthy   bool       `json:"is_healthy" db:"is_healthy"`
+	LastProbeAt *time.Time `json:"last_probe_at,omitempty" db:"last_probe_at"`
 }
 
 type NodeStorage struct {
@@ -53,6 +65,7 @@ func (s *NodeStorage) createTables() error {
 		country TEXT,
 		region TEXT,
 		city TEXT,
+		zip TEXT,
 		is_online BOOLEAN DEFAULT true,
 		last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -64,32 +77,127 @@ func (s *NodeStorage) createTables() error {
 	CREATE INDEX IF NOT EXISTS idx_nodes_last_seen ON proxy_nodes(last_seen);
 	`
 	_, err := s.db.Exec(query)
-	return err
+	if err != nil {
+		return err
+	}
+	return s.migrateSchema()
+}
+
+func (s *NodeStorage) migrateSchema() error {
+	columns := map[string]string{
+		"zip":           "TEXT",
+		"platform":      "TEXT",
+		"device_class":  "TEXT",
+		"network_type":  "TEXT",
+		"last_probe_at": "DATETIME",
+		"is_healthy":    "BOOLEAN DEFAULT 0",
+	}
+	for name, def := range columns {
+		var count int
+		err := s.db.QueryRow(
+			`SELECT COUNT(*) FROM pragma_table_info('proxy_nodes') WHERE name = ?`,
+			name,
+		).Scan(&count)
+		if err != nil {
+			return err
+		}
+		if count == 0 {
+			if _, err = s.db.Exec(fmt.Sprintf(`ALTER TABLE proxy_nodes ADD COLUMN %s %s`, name, def)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func scanNode(rows *sql.Rows) (ProxyNode, error) {
+	var node ProxyNode
+	var lastProbe sql.NullTime
+	err := rows.Scan(
+		&node.ID, &node.IP, &node.Port, &node.Username, &node.Password,
+		&node.Country, &node.Region, &node.City, &node.Zip,
+		&node.Platform, &node.DeviceClass, &node.NetworkType,
+		&node.IsOnline, &node.LastSeen, &node.CreatedAt, &node.UpdatedAt,
+		&node.IsHealthy, &lastProbe,
+	)
+	if err != nil {
+		return ProxyNode{}, err
+	}
+	if lastProbe.Valid {
+		node.LastProbeAt = &lastProbe.Time
+	}
+	return node, nil
 }
 
 func (s *NodeStorage) UpsertNode(node *ProxyNode) error {
+	// Use ON CONFLICT so heartbeats refresh metadata without wiping probe results.
+	// INSERT OR REPLACE would reset is_healthy and last_probe_at to defaults.
 	query := `
-	INSERT OR REPLACE INTO proxy_nodes 
-	(id, ip, port, username, password, country, region, city, is_online, last_seen, updated_at)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, true, ?, ?)
+	INSERT INTO proxy_nodes
+	(id, ip, port, username, password, country, region, city, zip,
+	 platform, device_class, network_type, is_online, last_seen, updated_at)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, true, ?, ?)
+	ON CONFLICT(id) DO UPDATE SET
+		ip = excluded.ip,
+		port = excluded.port,
+		username = excluded.username,
+		password = excluded.password,
+		country = excluded.country,
+		region = excluded.region,
+		city = excluded.city,
+		zip = excluded.zip,
+		platform = excluded.platform,
+		device_class = excluded.device_class,
+		network_type = excluded.network_type,
+		is_online = true,
+		last_seen = excluded.last_seen,
+		updated_at = excluded.updated_at
 	`
 
 	nodeID := fmt.Sprintf("%s:%d", node.IP, node.Port)
 	now := time.Now()
 
 	_, err := s.db.Exec(query, nodeID, node.IP, node.Port, node.Username,
-		node.Password, node.Country, node.Region, node.City, now, now)
+		node.Password, node.Country, node.Region, node.City, node.Zip,
+		node.Platform, node.DeviceClass, node.NetworkType, now, now)
 	return err
 }
 
-func (s *NodeStorage) GetOnlineNodes() ([]ProxyNode, error) {
-	query := `
-	SELECT id, ip, port, username, password, country, region, city, 
-	       is_online, last_seen, created_at, updated_at 
-	FROM proxy_nodes 
-	WHERE is_online = true AND last_seen > datetime('now', '-5 minutes')
-	ORDER BY last_seen DESC
-	`
+func (s *NodeStorage) GetNodeByID(id string) (*ProxyNode, error) {
+	query := fmt.Sprintf(`
+	SELECT %s
+	FROM proxy_nodes
+	WHERE id = ?
+	`, nodeSelectColumns)
+
+	row := s.db.QueryRow(query, id)
+	var node ProxyNode
+	var lastProbe sql.NullTime
+	err := row.Scan(
+		&node.ID, &node.IP, &node.Port, &node.Username, &node.Password,
+		&node.Country, &node.Region, &node.City, &node.Zip,
+		&node.Platform, &node.DeviceClass, &node.NetworkType,
+		&node.IsOnline, &node.LastSeen, &node.CreatedAt, &node.UpdatedAt,
+		&node.IsHealthy, &lastProbe,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if lastProbe.Valid {
+		node.LastProbeAt = &lastProbe.Time
+	}
+	return &node, nil
+}
+
+func (s *NodeStorage) GetAllNodes() ([]ProxyNode, error) {
+	query := fmt.Sprintf(`
+	SELECT %s
+	FROM proxy_nodes
+	ORDER BY is_online DESC, last_seen DESC
+	`, nodeSelectColumns)
 
 	rows, err := s.db.Query(query)
 	if err != nil {
@@ -99,10 +207,33 @@ func (s *NodeStorage) GetOnlineNodes() ([]ProxyNode, error) {
 
 	var nodes []ProxyNode
 	for rows.Next() {
-		var node ProxyNode
-		err := rows.Scan(&node.ID, &node.IP, &node.Port, &node.Username,
-			&node.Password, &node.Country, &node.Region, &node.City,
-			&node.IsOnline, &node.LastSeen, &node.CreatedAt, &node.UpdatedAt)
+		node, err := scanNode(rows)
+		if err != nil {
+			continue
+		}
+		nodes = append(nodes, node)
+	}
+
+	return nodes, nil
+}
+
+func (s *NodeStorage) GetOnlineNodes() ([]ProxyNode, error) {
+	query := fmt.Sprintf(`
+	SELECT %s
+	FROM proxy_nodes 
+	WHERE is_online = true AND last_seen > datetime('now', '-5 minutes')
+	ORDER BY last_seen DESC
+	`, nodeSelectColumns)
+
+	rows, err := s.db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var nodes []ProxyNode
+	for rows.Next() {
+		node, err := scanNode(rows)
 		if err != nil {
 			continue
 		}
@@ -113,15 +244,22 @@ func (s *NodeStorage) GetOnlineNodes() ([]ProxyNode, error) {
 }
 
 func (s *NodeStorage) GetNodesByCountry(country string) ([]ProxyNode, error) {
-	query := `
-	SELECT id, ip, port, username, password, country, region, city,
-	       is_online, last_seen, created_at, updated_at 
-	FROM proxy_nodes 
-	WHERE country = ? AND is_online = true AND last_seen > datetime('now', '-5 minutes')
-	ORDER BY last_seen DESC
-	`
+	values := geo.CountryQueryValues(country)
+	placeholders := make([]string, len(values))
+	args := make([]interface{}, len(values))
+	for i, v := range values {
+		placeholders[i] = "?"
+		args[i] = v
+	}
 
-	rows, err := s.db.Query(query, country)
+	query := fmt.Sprintf(`
+	SELECT %s
+	FROM proxy_nodes 
+	WHERE country IN (%s) AND is_online = true AND last_seen > datetime('now', '-5 minutes')
+	ORDER BY last_seen DESC
+	`, nodeSelectColumns, strings.Join(placeholders, ", "))
+
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -129,10 +267,7 @@ func (s *NodeStorage) GetNodesByCountry(country string) ([]ProxyNode, error) {
 
 	var nodes []ProxyNode
 	for rows.Next() {
-		var node ProxyNode
-		err := rows.Scan(&node.ID, &node.IP, &node.Port, &node.Username,
-			&node.Password, &node.Country, &node.Region, &node.City,
-			&node.IsOnline, &node.LastSeen, &node.CreatedAt, &node.UpdatedAt)
+		node, err := scanNode(rows)
 		if err != nil {
 			continue
 		}
@@ -140,6 +275,15 @@ func (s *NodeStorage) GetNodesByCountry(country string) ([]ProxyNode, error) {
 	}
 
 	return nodes, nil
+}
+
+func (s *NodeStorage) UpdateNodeHealth(id string, healthy bool, probedAt time.Time) error {
+	_, err := s.db.Exec(`
+	UPDATE proxy_nodes
+	SET is_healthy = ?, last_probe_at = ?, updated_at = CURRENT_TIMESTAMP
+	WHERE id = ?
+	`, healthy, probedAt, id)
+	return err
 }
 
 func (s *NodeStorage) MarkOfflineNodes() error {

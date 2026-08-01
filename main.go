@@ -3,20 +3,26 @@ package main
 import (
 	"bufio"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/Skillz147/TrinityProxy/internal/agent"
+	"github.com/Skillz147/TrinityProxy/internal/config"
+	"github.com/Skillz147/TrinityProxy/internal/logutil"
+	"github.com/Skillz147/TrinityProxy/internal/proxy"
+	"golang.org/x/term"
 )
 
-func runCommand(name string, args ...string) {
+func runCommand(log *slog.Logger, name string, args ...string) {
 	cmd := exec.Command(name, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		log.Fatalf("[-] Failed to run %s: %v", name, err)
+		logutil.Fatal(log, "failed to run command", "cmd", name, "err", err)
 	}
 }
 
@@ -141,58 +147,136 @@ func fileExists(filename string) bool {
 	return !os.IsNotExist(err)
 }
 
-func runInstaller() {
-	log.Println("[*] Running TrinityProxy installer...")
-	runCommand("go", "run", "./cmd/installer/installer.go")
+func isNonInteractive() bool {
+	if os.Getenv("TRINITY_NONINTERACTIVE") == "1" {
+		return true
+	}
+	return !term.IsTerminal(int(os.Stdin.Fd()))
 }
 
-func runHeartbeatAgent() {
-	log.Println("[*] Starting heartbeat agent...")
+func runInstaller(log *slog.Logger) {
+	installerPath := resolveBuildBinary("installer")
+	log.Info("running TrinityProxy installer", "path", installerPath)
+	runCommand(log, installerPath)
+}
+
+func runHeartbeatAgent(log *slog.Logger) {
+	log.Info("starting heartbeat agent")
 	go agent.StartHeartbeatLoop()
 	select {} // block forever
 }
 
-func runAPIController() {
-	log.Println("[*] Starting API server...")
-	runCommand("go", "run", "./cmd/api/enhanced_main.go")
+func startEmbeddedSOCKS(log *slog.Logger) {
+	srv, err := proxy.StartEmbedded()
+	if err != nil {
+		logutil.Fatal(log, "failed to start embedded SOCKS proxy", "err", err)
+	}
+	log.Info("embedded SOCKS proxy started",
+		"port", srv.Port,
+		"username", srv.Username,
+	)
+}
+
+func skipAgentInstaller() bool {
+	return proxy.UseEmbedded()
+}
+
+func deviceClass() string {
+	if v := strings.TrimSpace(os.Getenv("TRINITY_DEVICE_CLASS")); v != "" {
+		return v
+	}
+	switch runtime.GOOS {
+	case "darwin":
+		return "macos"
+	case "linux":
+		return "linux"
+	default:
+		return runtime.GOOS
+	}
+}
+
+func logAgentEnv(log *slog.Logger, cfgControllerURL string) {
+	cls := deviceClass()
+	if os.Getenv("TRINITY_DEVICE_CLASS") == "" {
+		log.Info("TRINITY_DEVICE_CLASS unset — using auto-detected default",
+			"device_class", cls,
+			"hint", "set TRINITY_DEVICE_CLASS=macos|linux|vps|desktop to label this agent")
+	} else {
+		log.Info("agent environment", "device_class", cls)
+	}
+	if cfgControllerURL != "" {
+		log.Info("controller configured", "controller_url", cfgControllerURL)
+	} else {
+		log.Warn("CONTROLLER_URL unset — heartbeats need a controller base URL")
+	}
+	if os.Getenv("TRINITY_AGENT_KEY") != "" {
+		log.Info("heartbeat auth enabled via TRINITY_AGENT_KEY")
+	}
+}
+
+func resolveBuildBinary(name string) string {
+	if root := os.Getenv("TRINITY_ROOT"); root != "" {
+		return filepath.Join(root, "build", name)
+	}
+
+	exe, err := os.Executable()
+	if err != nil {
+		return filepath.Join("build", name)
+	}
+
+	return filepath.Join(filepath.Dir(exe), name)
+}
+
+func runAPIController(log *slog.Logger) {
+	apiPath := resolveBuildBinary("trinityproxy-api")
+	log.Info("starting API server", "path", apiPath)
+	runCommand(log, apiPath)
 }
 
 func main() {
+	log := logutil.New("launcher")
+	nonInteractive := isNonInteractive()
 	role := strings.ToLower(os.Getenv("TRINITY_ROLE"))
 
-	// Always show current status and allow override
 	if role != "" {
 		fmt.Printf("[*] Current TRINITY_ROLE: %s\n", role)
 
-		reader := bufio.NewReader(os.Stdin)
-		fmt.Print("[?] Use existing role? (Y/n): ")
-		response, _ := reader.ReadString('\n')
-		response = strings.ToLower(strings.TrimSpace(response))
+		if nonInteractive {
+			fmt.Printf("[*] Using role: %s (non-interactive mode)\n", role)
+		} else {
+			reader := bufio.NewReader(os.Stdin)
+			fmt.Print("[?] Use existing role? (Y/n): ")
+			response, _ := reader.ReadString('\n')
+			response = strings.ToLower(strings.TrimSpace(response))
 
-		if response == "n" || response == "no" {
-			fmt.Println("[*] Overriding existing role...")
-			role = "" // Force re-selection
+			if response == "n" || response == "no" {
+				fmt.Println("[*] Overriding existing role...")
+				role = ""
+			}
 		}
 	}
 
-	// If no role is set or user wants to override, prompt for selection
 	if role == "" {
+		if nonInteractive {
+			logutil.Fatal(log, "TRINITY_ROLE must be set in non-interactive mode",
+				"hint", "TRINITY_ROLE=agent or TRINITY_ROLE=controller")
+		}
+
 		fmt.Println("[!] TRINITY_ROLE environment variable not set or being overridden.")
 
 		selectedRole, err := promptForRole()
 		if err != nil {
-			log.Fatalf("[-] Setup failed: %v", err)
+			logutil.Fatal(log, "setup failed", "err", err)
 		}
 
 		role = selectedRole
 
-		// Set the environment variable for current session and optionally persist
 		if err := setEnvironmentVariable("TRINITY_ROLE", role); err != nil {
-			log.Printf("[!] Warning: Failed to set environment variable: %v", err)
+			log.Warn("failed to set environment variable", "err", err)
 		}
 
 		fmt.Printf("\n[+] Role set to: %s\n", role)
-	} else {
+	} else if !nonInteractive {
 		fmt.Printf("[*] Using role: %s\n", role)
 	}
 
@@ -201,13 +285,23 @@ func main() {
 	case "controller":
 		fmt.Println("\n[*] Starting in Controller mode...")
 		fmt.Println("[*] This will start the API server for managing proxy nodes")
-		runAPIController()
+		runAPIController(log)
 	case "agent":
-		fmt.Println("\n[*] Starting in Agent mode...")
-		fmt.Println("[*] This will install SOCKS5 proxy and start heartbeat reporting")
-		runInstaller()
-		runHeartbeatAgent()
+		cfg := config.Load()
+		logAgentEnv(log, cfg.ControllerURL)
+		if skipAgentInstaller() {
+			fmt.Println("\n[*] Embedded SOCKS mode — Go proxy, no Dante installer")
+			fmt.Printf("[*] TRINITY_DEVICE_CLASS=%s (override with env)\n", deviceClass())
+			fmt.Println("[*] SOCKS5 on TRINITY_SOCKS_PORT (default 1080); heartbeats to CONTROLLER_URL/api/heartbeat")
+			startEmbeddedSOCKS(log)
+		} else {
+			fmt.Println("\n[*] Starting in Agent mode...")
+			fmt.Printf("[*] TRINITY_DEVICE_CLASS=%s (override with env)\n", deviceClass())
+			fmt.Println("[*] This will install SOCKS5 proxy and start heartbeat reporting")
+			runInstaller(log)
+		}
+		runHeartbeatAgent(log)
 	default:
-		log.Fatalf("[-] Invalid TRINITY_ROLE '%s'. Valid options are 'controller' or 'agent'", role)
+		logutil.Fatal(log, "invalid TRINITY_ROLE", "role", role, "valid", "controller, agent")
 	}
 }

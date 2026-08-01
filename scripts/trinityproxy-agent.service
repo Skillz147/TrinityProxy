@@ -1,16 +1,21 @@
 [Unit]
 Description=TrinityProxy SOCKS5 Agent
 Documentation=https://github.com/Skillz147/TrinityProxy
-After=network-online.target
+After=network-online.target trinityproxy.service
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=root
-Group=root
+User=trinityproxy-agent
+Group=trinityproxy-agent
 WorkingDirectory=/root/TrinityProxy
 Environment=TRINITY_ROLE=agent
-Environment=PATH=/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=TRINITY_NONINTERACTIVE=1
+# Set when the controller requires heartbeat auth (must match controller TRINITY_AGENT_KEY):
+# Environment=TRINITY_AGENT_KEY=your-agent-key
+# Environment=CONTROLLER_URL=http://your-controller:3100
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# Initial /etc/ setup: sudo scripts/install-agent-service.sh (runs build/installer as root once).
 ExecStart=/root/TrinityProxy/build/trinityproxy
 ExecReload=/bin/kill -USR1 $MAINPID
 KillMode=mixed
@@ -20,6 +25,12 @@ Restart=always
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
+
+# Hardening (agent reads /etc/trinityproxy-* via group membership)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadOnlyPaths=/root/TrinityProxy/build
 
 [Install]
 WantedBy=multi-user.target

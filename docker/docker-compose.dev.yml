@@ -1,0 +1,22 @@
+# Local dev: one Linux agent container talking to the controller on the Mac host.
+# Start with: make docker-agent
+name: trinityproxy-dev
+
+services:
+  agent:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.agent
+    container_name: trinityproxy-agent-dev
+    restart: unless-stopped
+    environment:
+      CONTROLLER_URL: ${CONTROLLER_URL:-http://host.docker.internal:3100}
+      TRINITY_AGENT_KEY: ${TRINITY_AGENT_KEY:-}
+      HEARTBEAT_INTERVAL: ${HEARTBEAT_INTERVAL:-60s}
+      TRINITY_ROLE: agent
+      TRINITY_NONINTERACTIVE: "1"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      # Local install script (dev reference; entrypoint uses build/installer in-image)
+      - ../scripts/install-agent-service.sh:/app/scripts/install-agent-service.sh:ro

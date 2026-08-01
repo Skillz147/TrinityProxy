@@ -1,7 +1,14 @@
 # TrinityProxy Makefile
 # Easy build and deployment for SOCKS5 proxy network
 
-.PHONY: help build clean install deps test run-controller run-agent setup-dev check-deps format lint setup-system vps-setup setup-api-controller quickstart debug cleanup install-service start-service stop-service
+.PHONY: help build build-main build-dashboard build-windows-agent build-darwin-agent build-linux-amd64 build-linux-arm64 install-agent-macos clean install deps test run-controller start-controller run-agent run-agent-dev docker-agent test-agent-docker docker-agent-down setup-dev check-deps format lint setup-system vps-setup setup-api-controller quickstart debug cleanup install-service start-service stop-service start stop dashboard dashboard-dev dashboard-init dashboard-run dashboard-up run-dashboard sync-agent-key
+
+# Catch accidental "make run dashboard" (space) — the target is run-dashboard (hyphen).
+ifneq (,$(filter dashboard,$(MAKECMDGOALS)))
+ifeq ($(filter run dashboard,$(MAKECMDGOALS)),run dashboard)
+$(error Wrong command: use 'make run-dashboard' (hyphen, not space). Run 'make dashboard-dev' for instructions.)
+endif
+endif
 
 # Default target
 all: deps build
@@ -12,36 +19,53 @@ help:
 	@echo "========================="
 	@echo ""
 	@echo "🚀 SIMPLE COMMANDS (for users):"
-	@echo "  make run-controller    - Start as API controller (auto-installs nginx/SSL if needed)"
-	@echo "  make run-agent         - Complete agent setup (installs service, starts in background)"
+	@echo "  make start             - Start dashboard (API + UI) — open http://localhost:8080"
+	@echo "  make stop              - Stop dashboard dev servers"
+	@echo "  make run-controller    - Start API controller (loads .env.controller if present)"
+	@echo "  make start-controller  - Sync agent key from dashboard, then start controller"
+	@echo "  make run-agent         - Complete agent setup (Linux: systemd + Dante)"
+	@echo "  make run-agent-dev     - macOS/local dev agent (embedded SOCKS :1080, foreground)"
+	@echo "  make docker-agent      - Linux agent in Docker (simulates VPS; needs Docker Desktop)"
 	@echo "  make run               - Interactive role selection"
 	@echo ""
 	@echo "📋 Available targets:"
 	@echo ""
 	@echo "Quick Setup:"
 	@echo "  make quickstart        - Standard setup (after system dependencies)"
-	@echo "  make vps-setup         - Complete VPS setup for CONTROLLER"
+	@echo "  make vps-setup         - VPS deps + controller systemd (no TLS — use Caddy scripts or dashboard SSL)"
 	@echo "  make agent-setup       - Complete VPS setup for AGENT"
 	@echo "  make setup-system      - Install system dependencies (Go, Dante, etc.)"
 	@echo ""
 	@echo "Build & Dependencies:"
 	@echo "  make all               - Install dependencies and build everything"
 	@echo "  make build             - Build all binaries"
+	@echo "  make build-darwin-agent  - Cross-build agent for macOS (amd64 + arm64)"
+	@echo "  make build-linux-amd64   - Cross-build agent for linux/amd64"
+	@echo "  make build-linux-arm64   - Cross-build agent for linux/arm64"
+	@echo "  make build-windows-agent - Cross-compile agent for Windows (amd64)"
 	@echo "  make deps              - Install Go dependencies"
 	@echo "  make install           - Install system dependencies (requires sudo)"
 	@echo "  make clean             - Clean build artifacts"
 	@echo ""
 	@echo "Development:"
+	@echo "  make start             - Start dashboard dev (API + UI, one command)"
+	@echo "  make stop              - Stop dashboard dev servers"
 	@echo "  make setup-dev         - Complete development setup"
+	@echo "  make dashboard-dev     - Quick reminder: make start"
+	@echo "  make run-dashboard     - Start dashboard API only on :8081 (advanced)"
+	@echo "  make dashboard-up      - Check :8080 (Vite UI) and :8081 (API) are running"
+	@echo "  make dashboard-init    - Create initial dashboard admin credentials"
+	@echo "  make sync-agent-key    - Write .env.controller from dashboard.db agent key"
 	@echo "  make test              - Run tests"
 	@echo "  make format            - Format Go code"
 	@echo "  make lint              - Run linter"
 	@echo "  make check-deps        - Check system dependencies"
 	@echo ""
 	@echo "VPS Deployment:"
-	@echo "  make setup-api-controller - Setup controller with SSL/NGINX"
+	@echo "  make setup-api-controller - Print Caddy SSL setup instructions (deprecated target)"
 	@echo "  make install-service      - Install controller as systemd service"
 	@echo "  make install-agent-service - Install agent as systemd service"
+	@echo "  make install-agent-macos   - Install agent as macOS launchd service"
 	@echo "  make start-service        - Start systemd controller service"
 	@echo "  make stop-service         - Stop systemd controller service"
 	@echo "  make start-agent-service  - Start systemd agent service"
@@ -55,36 +79,104 @@ BINARY_NAME=trinityproxy
 BUILD_DIR=build
 GO_FILES=$(shell find . -name "*.go" -type f)
 INSTALLER_BINARY=$(BUILD_DIR)/installer
-API_BINARY=$(BUILD_DIR)/api
+API_BINARY=$(BUILD_DIR)/trinityproxy-api
+DASHBOARD_BINARY=$(BUILD_DIR)/trinityproxy-dashboard
 
 # Go build flags
 LDFLAGS=-ldflags "-X main.Version=$(shell export PATH="/usr/local/go/bin:$$PATH"; git describe --tags --always --dirty 2>/dev/null || echo 'dev')"
 
 # Build all binaries
-build: $(BUILD_DIR)/$(BINARY_NAME) $(INSTALLER_BINARY) $(API_BINARY)
+build: build-main build-dashboard $(INSTALLER_BINARY) $(API_BINARY)
 	@echo "[+] Build complete!"
 	@echo "[*] Main binary: $(BUILD_DIR)/$(BINARY_NAME)"
 	@echo "[*] Installer: $(INSTALLER_BINARY)"
 	@echo "[*] API Server: $(API_BINARY)"
+	@echo "[*] Dashboard: $(DASHBOARD_BINARY)"
+
+# Build main agent/controller binary only
+build-main: $(BUILD_DIR)/$(BINARY_NAME)
+
+# Build dashboard API binary only
+build-dashboard: $(DASHBOARD_BINARY)
 
 # Build main binary
-$(BUILD_DIR)/$(BINARY_NAME): $(GO_FILES) | $(BUILD_DIR)
+$(BUILD_DIR)/$(BINARY_NAME): $(GO_FILES) | $(BUILD_DIR)/.dir
 	@echo "[*] Building main binary..."
 	@export PATH="/usr/local/go/bin:$$PATH"; go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) .
 
+# Cross-compile agent binary for Windows (copy to PC, then run scripts/install-agent-windows.ps1)
+build-windows-agent: $(BUILD_DIR)/trinityproxy.exe
+	@echo "[+] Windows agent binary: $(BUILD_DIR)/trinityproxy.exe"
+	@echo "[*] Copy to a Windows PC and run scripts/install-agent-windows.ps1 (see docs/WINDOWS_AGENT.md)"
+	@echo "[*] On Windows, test in foreground before installing the service:"
+	@echo "      set TRINITY_ROLE=agent TRINITY_NONINTERACTIVE=1 TRINITY_SKIP_INSTALLER=1"
+	@echo "      set CONTROLLER_URL=https://api.example.com TRINITY_AGENT_KEY=... TRINITY_SOCKS_PORT=1080"
+	@echo "      build\\trinityproxy.exe"
+
+$(BUILD_DIR)/trinityproxy.exe: $(GO_FILES) | $(BUILD_DIR)/.dir
+	@echo "[*] Building Windows agent binary (GOOS=windows GOARCH=amd64)..."
+	@export PATH="/usr/local/go/bin:$$PATH"; GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/trinityproxy.exe .
+
 # Build installer binary
-$(INSTALLER_BINARY): cmd/installer/installer.go | $(BUILD_DIR)
+$(INSTALLER_BINARY): cmd/installer/installer.go | $(BUILD_DIR)/.dir
 	@echo "[*] Building installer..."
 	@export PATH="/usr/local/go/bin:$$PATH"; go build $(LDFLAGS) -o $(INSTALLER_BINARY) ./cmd/installer
 
 # Build API server binary
-$(API_BINARY): cmd/api/enhanced_main.go | $(BUILD_DIR)
+$(API_BINARY): cmd/api/enhanced_main.go | $(BUILD_DIR)/.dir
 	@echo "[*] Building API server..."
 	@export PATH="/usr/local/go/bin:$$PATH"; go build $(LDFLAGS) -o $(API_BINARY) ./cmd/api
 
-# Create build directory
-$(BUILD_DIR):
-	mkdir -p $(BUILD_DIR)
+# Build dashboard server binary (all dashboard packages — not only main.go)
+DASHBOARD_GO_SRCS := $(shell find cmd/dashboard internal/dashboard -name '*.go' 2>/dev/null)
+
+$(DASHBOARD_BINARY): $(DASHBOARD_GO_SRCS) | $(BUILD_DIR)/.dir
+	@echo "[*] Building dashboard server..."
+	@export PATH="/usr/local/go/bin:$$PATH"; go build $(LDFLAGS) -o $(DASHBOARD_BINARY) ./cmd/dashboard
+
+# Create build directory (must not be named "build" — that is the top-level build target)
+$(BUILD_DIR)/.dir:
+	@mkdir -p $(BUILD_DIR)
+	@touch $@
+
+# Cross-compile agent binary for macOS (amd64 + arm64)
+build-darwin-agent: | $(BUILD_DIR)/.dir
+	@echo "[*] Building agent for darwin/amd64..."
+	@export PATH="/usr/local/go/bin:$$PATH"; \
+	GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/trinityproxy-darwin-amd64 .
+	@echo "[*] Building agent for darwin/arm64..."
+	@export PATH="/usr/local/go/bin:$$PATH"; \
+	GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o $(BUILD_DIR)/trinityproxy-darwin-arm64 .
+	@echo "[+] Agent binaries: $(BUILD_DIR)/trinityproxy-darwin-amd64 $(BUILD_DIR)/trinityproxy-darwin-arm64"
+
+# Cross-compile agent binary for Linux amd64
+build-linux-amd64: | $(BUILD_DIR)/.dir
+	@echo "[*] Building agent for linux/amd64..."
+	@export PATH="/usr/local/go/bin:$$PATH"; \
+	GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/trinityproxy-linux-amd64 .
+	@echo "[+] Agent binary: $(BUILD_DIR)/trinityproxy-linux-amd64"
+
+# Cross-compile agent binary for Linux arm64
+build-linux-arm64: | $(BUILD_DIR)/.dir
+	@echo "[*] Building agent for linux/arm64..."
+	@export PATH="/usr/local/go/bin:$$PATH"; \
+	GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -o $(BUILD_DIR)/trinityproxy-linux-arm64 .
+	@echo "[+] Agent binary: $(BUILD_DIR)/trinityproxy-linux-arm64"
+
+# Install agent as macOS launchd service (requires CONTROLLER_URL)
+install-agent-macos: build-main
+	@if [ "$$(uname -s)" != "Darwin" ]; then \
+		echo "[!] install-agent-macos is for macOS only. On Linux use: make install-agent-service"; \
+		exit 1; \
+	fi
+	@if [ -f .env.controller ]; then \
+		echo "[*] Loading .env.controller (TRINITY_AGENT_KEY)"; \
+	fi
+	@chmod +x scripts/install-agent-macos.sh
+	@export PATH="/usr/local/go/bin:$$PATH"; \
+	$(load-controller-env) \
+	CONTROLLER_URL="$${CONTROLLER_URL:-http://127.0.0.1:3100}" \
+	./scripts/install-agent-macos.sh
 
 # Install Go dependencies
 deps:
@@ -177,13 +269,38 @@ run: build
 	@echo "[*] Starting TrinityProxy with interactive setup..."
 	@export PATH="/usr/local/go/bin:$$PATH"; ./$(BUILD_DIR)/$(BINARY_NAME)
 
+# Load .env.controller (TRINITY_AGENT_KEY) when present — written by make sync-agent-key
+define load-controller-env
+set -a; \
+if [ -f .env.controller ]; then \
+	. ./.env.controller; \
+fi; \
+set +a;
+endef
+
 # Smart controller setup - handles all controller requirements automatically
-run-controller: build
+run-controller: build-main
 	@echo "[*] Starting TrinityProxy in Controller mode..."
-	@export PATH="/usr/local/go/bin:$$PATH"; TRINITY_ROLE=controller ./$(BUILD_DIR)/$(BINARY_NAME)
+	@if [ -f .env.controller ]; then \
+		echo "[*] Loading .env.controller (TRINITY_AGENT_KEY)"; \
+	else \
+		echo "[!] No .env.controller — run 'make sync-agent-key' after dashboard generates an agent key"; \
+	fi
+	@export PATH="/usr/local/go/bin:$$PATH"; \
+	$(load-controller-env) \
+	TRINITY_NONINTERACTIVE=1 \
+	TRINITY_ROLE=controller ./$(BUILD_DIR)/$(BINARY_NAME)
+
+# Sync agent key from dashboard DB, then start controller (full dev stack helper)
+start-controller: sync-agent-key run-controller
 
 # Smart agent setup - handles all agent requirements automatically  
-run-agent: 
+run-agent:
+	@if [ "$$(uname -s)" = "Darwin" ]; then \
+		echo "[!] systemd and Dante are Linux-only."; \
+		echo "[*] On macOS, use: make run-agent-dev"; \
+		exit 1; \
+	fi
 	@echo "[*] Setting up TrinityProxy Agent (complete setup)..."
 	@echo "[*] Checking agent requirements..."
 	@# Ensure system dependencies are installed
@@ -219,8 +336,64 @@ run-agent:
 		sudo journalctl -u trinityproxy-agent --no-pager -n 20; \
 	fi
 
+# macOS / local dev — embedded SOCKS, no systemd or Dante
+run-agent-dev: build-main
+	@echo ""
+	@echo "============================================"
+	@echo "  macOS dev mode — embedded SOCKS on :1080 (no Dante)"
+	@echo "============================================"
+	@echo ""
+	@if [ -f .env.controller ]; then \
+		echo "[*] Loading .env.controller (TRINITY_AGENT_KEY)"; \
+	else \
+		echo "[!] No .env.controller — run 'make sync-agent-key' after dashboard generates an agent key"; \
+	fi
+	@echo "[*] Controller: $${CONTROLLER_URL:-http://127.0.0.1:3100}"
+	@echo "[*] SOCKS5: :$${TRINITY_SOCKS_PORT:-1080} (user=dev, pass=dev)"
+	@echo "[*] Press Ctrl+C to stop."
+	@echo ""
+	@export PATH="/usr/local/go/bin:$$PATH"; \
+	$(load-controller-env) \
+	CONTROLLER_URL="$${CONTROLLER_URL:-http://127.0.0.1:3100}" \
+	TRINITY_ROLE=agent \
+	TRINITY_NONINTERACTIVE=1 \
+	TRINITY_SKIP_INSTALLER=1 \
+	TRINITY_DEVICE_CLASS=desktop \
+	TRINITY_SOCKS_PORT="$${TRINITY_SOCKS_PORT:-1080}" \
+	./$(BUILD_DIR)/$(BINARY_NAME)
+
+DOCKER_COMPOSE_DEV = docker compose -f docker/docker-compose.dev.yml
+
+# Linux agent in Docker — simulates a VPS agent on macOS (heartbeats → host :3100)
+docker-agent test-agent-docker:
+	@if ! command -v docker >/dev/null 2>&1; then \
+		echo "[!] Docker not found. Install Docker Desktop for Mac: https://www.docker.com/products/docker-desktop/"; \
+		exit 1; \
+	fi
+	@if [ ! -f .env.controller ]; then \
+		echo "[!] No .env.controller — run 'make start' then 'make sync-agent-key' first"; \
+		exit 1; \
+	fi
+	@echo "[*] Building and starting Linux agent container..."
+	@set -a; . ./.env.controller; set +a; \
+	export CONTROLLER_URL="$${CONTROLLER_URL:-http://host.docker.internal:3100}"; \
+	$(DOCKER_COMPOSE_DEV) up -d --build
+	@echo ""
+	@echo "Agent container started — check dashboard Agents page in ~60s"
+	@echo ""
+	@echo "  Logs:    docker logs -f trinityproxy-agent-dev"
+	@echo "  Stop:    make docker-agent-down"
+
+docker-agent-down:
+	@if command -v docker >/dev/null 2>&1; then \
+		$(DOCKER_COMPOSE_DEV) down; \
+		echo "[+] Agent container stopped."; \
+	else \
+		echo "[!] Docker not found."; \
+	fi
+
 # Development helpers
-dev-controller: build
+dev-controller: build-main
 	@echo "[*] Starting development controller (with auto-restart)..."
 	@if command -v entr >/dev/null 2>&1; then \
 		find . -name "*.go" | entr -r make run-controller; \
@@ -229,13 +402,92 @@ dev-controller: build
 		make run-controller; \
 	fi
 
-dev-agent: build
+dev-agent: build-main
 	@echo "[*] Starting development agent (with auto-restart)..."
-	@if command -v entr >/dev/null 2>&1; then \
-		find . -name "*.go" | entr -r make run-agent; \
+	@if [ "$$(uname -s)" = "Darwin" ]; then \
+		AGENT_TARGET=run-agent-dev; \
 	else \
-		echo "[!] Install 'entr' for auto-restart: apt-get install entr"; \
-		make run-agent; \
+		AGENT_TARGET=run-agent; \
+	fi; \
+	if command -v entr >/dev/null 2>&1; then \
+		find . -name "*.go" | entr -r make $$AGENT_TARGET; \
+	else \
+		echo "[!] Install 'entr' for auto-restart: apt-get install entr (Linux) or brew install entr (macOS)"; \
+		make $$AGENT_TARGET; \
+	fi
+
+# One command — starts dashboard API (:8081) + Vite UI (:8080)
+start dashboard:
+	@chmod +x scripts/start-dashboard-dev.sh
+	@./scripts/start-dashboard-dev.sh
+
+stop:
+	@chmod +x scripts/stop-dashboard-dev.sh
+	@./scripts/stop-dashboard-dev.sh
+
+# Dashboard API on :8081 (Vite UI dev server uses :8080)
+run-dashboard dashboard-run: build-dashboard
+	@echo "[*] Starting TrinityProxy Dashboard API on :8081..."
+	@echo ""
+	@echo "  This terminal = API only (:8081). Open the UI in a second terminal:"
+	@echo ""
+	@echo "    cd web/dashboard && npm run dev"
+	@echo ""
+	@echo "  Then browse: http://localhost:8080  (Vite proxies /api → :8081)"
+	@echo ""
+	@echo "  Tip: 'make dashboard-up' checks both ports. 'make dashboard-dev' lists all steps."
+	@if lsof -ti:8081 >/dev/null 2>&1; then \
+		echo "[!] Warning: :8081 already in use — stop the other process or pick another DASHBOARD_PORT."; \
+	fi
+	@export PATH="/usr/local/go/bin:$$PATH"; DASHBOARD_PORT=8081 ./$(DASHBOARD_BINARY)
+
+# Sync TRINITY_AGENT_KEY from dashboard.db into .env.controller for the controller API
+sync-agent-key:
+	@chmod +x scripts/sync-agent-key.sh
+	@./scripts/sync-agent-key.sh
+
+# Bootstrap initial dashboard admin (prints temp credentials once)
+dashboard-init: build-dashboard
+	@echo "[*] Initializing dashboard admin user..."
+	@export PATH="/usr/local/go/bin:$$PATH"; ./$(DASHBOARD_BINARY) --init-only
+
+# Quick reminder for dashboard dev
+dashboard-dev:
+	@echo "Start the dashboard:  make start"
+	@echo "Open in browser:      http://localhost:8080"
+	@echo "Stop when done:       make stop"
+
+# Check whether Vite (:8080) and dashboard API (:8081) are listening
+dashboard-up:
+	@echo "TrinityProxy Dashboard — service check"
+	@echo "======================================"
+	@VITE_UP=0; API_UP=0; \
+	if lsof -ti:8080 >/dev/null 2>&1; then \
+		VITE_UP=1; \
+		echo "[+] :8080 — Vite UI running (http://localhost:8080)"; \
+	else \
+		echo "[-] :8080 — Vite UI not running"; \
+		echo "        Start: make start"; \
+	fi; \
+	if lsof -ti:8081 >/dev/null 2>&1; then \
+		API_UP=1; \
+		echo "[+] :8081 — Dashboard API running"; \
+	else \
+		echo "[-] :8081 — Dashboard API not running"; \
+		echo "        Start: make run-dashboard  (hyphen — not 'make run dashboard')"; \
+	fi; \
+	echo ""; \
+	if [ $$VITE_UP -eq 1 ] && [ $$API_UP -eq 1 ]; then \
+		echo "Ready — open http://localhost:8080"; \
+	elif [ $$API_UP -eq 1 ]; then \
+		echo "API is up; start Vite in another terminal (see above)."; \
+		exit 1; \
+	elif [ $$VITE_UP -eq 1 ]; then \
+		echo "Vite is up; start the API with: make run-dashboard"; \
+		exit 1; \
+	else \
+		echo "Not ready — run 'make start' to launch the dashboard."; \
+		exit 1; \
 	fi
 
 # Deployment helpers
@@ -265,7 +517,8 @@ quickstart:
 	@echo ""
 	@echo "🚀 SIMPLE USAGE:"
 	@echo "  make run-controller   - Start as API controller (auto-installs everything)"
-	@echo "  make run-agent        - Complete agent setup (installs service, runs in background)"
+	@echo "  make run-agent        - Complete agent setup (Linux VPS: systemd + Dante)"
+	@echo "  make run-agent-dev    - macOS/local dev agent (embedded SOCKS :1080)"
 	@echo "  make run              - Interactive selection"
 	@echo ""
 
@@ -281,8 +534,8 @@ setup-system:
 		make install; \
 	fi
 
-# VPS-specific quickstart (includes system setup)
-vps-setup: setup-system quickstart setup-api-controller install-service
+# VPS-specific quickstart (deps + controller systemd — TLS via Caddy scripts or dashboard Cloudflare modal)
+vps-setup: setup-system quickstart install-service
 	@echo ""
 	@echo "[+] VPS Setup Complete!"
 	@echo "======================"
@@ -305,7 +558,7 @@ vps-setup: setup-system quickstart setup-api-controller install-service
 	@if sudo systemctl is-active trinityproxy-controller >/dev/null 2>&1; then \
 		echo "🚀 SUCCESS! TrinityProxy Controller is running!"; \
 		echo ""; \
-		echo "✅ API Available at: https://api.sauronstore.com"; \
+		echo "✅ API listening on :3100 — expose via your CONTROLLER_DOMAIN (see scripts/setup-ssl-*.sh)"; \
 		echo "✅ Service Status: sudo systemctl status trinityproxy-controller"; \
 		echo "✅ View Logs: sudo journalctl -u trinityproxy-controller -f"; \
 		echo ""; \
@@ -342,20 +595,18 @@ agent-setup: setup-system quickstart install-agent-service
 	fi
 	@echo ""
 
-# API Controller setup with SSL (uses setup_api.sh)
+# Deprecated — SSL is configured via dashboard Cloudflare modal or Caddy scripts (not Make).
 setup-api-controller:
-	@if [ -f "scripts/setup_api.sh" ]; then \
-		echo "[*] Setting up API controller with SSL..."; \
-		chmod +x scripts/setup_api.sh; \
-		sudo bash scripts/setup_api.sh; \
-		echo "[+] API controller setup complete!"; \
-	else \
-		echo "[!] API setup script not found. Using basic controller setup..."; \
-		make run-controller; \
-	fi
+	@echo "[!] setup-api-controller is deprecated."
+	@echo "[*] Production TLS options:"
+	@echo "    1. Dashboard → Settings → Cloudflare SSL (DNS-01 wildcard, proxied A records)"
+	@echo "    2. sudo PUBLIC_DOMAIN=example.com CLOUDFLARE_API_TOKEN=... SERVER_IP=... EMAIL=... \\"
+	@echo "         ./scripts/setup-ssl-caddy-cloudflare.sh"
+	@echo "    3. sudo CONTROLLER_DOMAIN=api.example.com SERVER_IP=... EMAIL=... ./scripts/setup-ssl-caddy.sh"
+	@echo "[*] Controller systemd only: make install-service && sudo systemctl start trinityproxy-controller"
 
 # Install controller as systemd service (runs in background)
-install-service: build
+install-service: build-main $(API_BINARY)
 	@if [ -f "scripts/install-service.sh" ]; then \
 		echo "[*] Installing TrinityProxy Controller as systemd service..."; \
 		chmod +x scripts/install-service.sh; \
@@ -367,7 +618,7 @@ install-service: build
 	fi
 
 # Install agent as systemd service (runs in background)
-install-agent-service: build
+install-agent-service: build-main
 	@if [ -f "scripts/install-agent-service.sh" ]; then \
 		echo "[*] Installing TrinityProxy Agent as systemd service..."; \
 		chmod +x scripts/install-agent-service.sh; \

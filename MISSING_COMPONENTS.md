@@ -1,127 +1,50 @@
-# TrinityProxy SOCKS5 Implementation Status
+# TrinityProxy — Implementation Gaps
 
-## ✅ **IMPLEMENTED COMPONENTS**
+> See [ROADMAP.md](ROADMAP.md) for the active implementation plan and task tracking.
 
-### 1. Core SOCKS5 Infrastructure
-- ✅ Dante SOCKS5 server installation and configuration
-- ✅ Random credential generation (username/password)
-- ✅ Random port assignment (20000-59999)
-- ✅ Systemd service configuration
-- ✅ Automatic service management
+Last reconciled with code: Aug 2026 (dashboard shipped, Caddy + Cloudflare SSL, embedded SOCKS).
 
-### 2. Database & Node Management
-- ✅ SQLite database with proxy_nodes table
-- ✅ Node storage with UpsertNode functionality  
-- ✅ Online/offline status tracking
-- ✅ Automatic offline node marking (5-minute timeout)
-- ✅ Geographic metadata storage (country, region, city)
+## ✅ Shipped
 
-### 3. Enhanced API Server
-- ✅ POST /api/heartbeat - Node registration & updates
-- ✅ GET /api/nodes - List all online nodes
-- ✅ GET /api/nodes/country?country=US - Filter by country
-- ✅ GET /api/nodes/random - Get random working node
-- ✅ GET /health - Health check endpoint
-- ✅ Background cleanup routine (1-minute intervals)
+### Core platform
+- Controller API (`:3100`) — heartbeats, node registry, SOCKS health probes, metrics
+- Dashboard (`:8080` UI / `:8081` API) — auth, agents fleet view, Settings, Deploy Agent, Cloudflare SSL modal
+- Embedded Go SOCKS5 — macOS, Windows, and local dev (`TRINITY_SKIP_INSTALLER=1`)
+- Linux production agents — Dante + systemd via `install-agent-service.sh`
+- Caddy reverse proxy — `setup-ssl-caddy.sh` (HTTP-01) and `setup-ssl-caddy-cloudflare.sh` (DNS-01 wildcard)
+- Health probes — online vs healthy; dev local-fallback for same-machine agents
+- API key auth — `TRINITY_API_KEY`, `TRINITY_AGENT_KEY`, `TRINITY_ADMIN_KEY`
+- Structured logging (`log/slog`), 42+ unit tests (`go test ./...`)
 
-### 4. Agent System
-- ✅ Heartbeat mechanism (60-second intervals)
-- ✅ Public IP detection via ipify.org
-- ✅ Geographic location lookup via ipapi.co
-- ✅ Credential file management (/etc/trinityproxy-*)
-- ✅ Metadata collection and reporting
+### Agent installers
+- Linux: `scripts/install-agent-service.sh` + curl bootstrap from dashboard
+- macOS: `scripts/install-agent-macos.sh` (launchd + embedded SOCKS)
+- Windows: `scripts/install-agent-windows.ps1` (service + embedded SOCKS)
+- Docker dev agent: `make docker-agent`
 
-### 5. Client Tools
-- ✅ Command-line client with multiple commands:
-  - ✅ `list` - Show all available nodes
-  - ✅ `random` - Get a random node
-  - ✅ `country` - Filter nodes by country
-  - ✅ `test` - Test all nodes (placeholder)
-- ✅ Multiple output formats (table, json, curl)
-- ✅ API endpoint integration
+---
 
-### 6. Interactive Setup
-- ✅ Role selection prompt (Controller/Agent)
-- ✅ Environment variable management
-- ✅ User-friendly setup wizard
-- ✅ Proper error handling and validation
+## ❌ Real gaps (not yet implemented)
 
-### 7. Deployment Infrastructure  
-- ✅ Dependency installation scripts (Go, Dante, NGINX)
-- ✅ SSL/TLS setup with Let's Encrypt
-- ✅ NGINX reverse proxy configuration
-- ✅ Firewall configuration (UFW)
-- ✅ Systemd service integration
-
-## ❌ **STILL MISSING COMPONENTS**
-
-### 1. Authentication & Security
-- [ ] API key system for client access
+### Security & hardening
 - [ ] Rate limiting on API endpoints
-- [ ] HTTPS enforcement for all endpoints
-- [ ] Encrypted credential storage
-
-### 2. Advanced Node Management  
-- [ ] Real SOCKS5 connectivity testing
-- [ ] Node performance metrics (latency, bandwidth)
+- [ ] Encrypted credential storage at rest (SQLite fields)
 - [ ] Automatic credential rotation
-- [ ] Node health scoring system
+- [ ] Optional HTTPS-only enforcement in Go (TLS currently terminates at Caddy)
 
-### 3. Load Balancing & Intelligence
-- [ ] Smart proxy selection algorithms
-- [ ] Failover mechanisms
-- [ ] Geographic routing optimization
-- [ ] Usage-based load balancing
+### Observability & operations
+- [ ] Per-node performance metrics (latency, bandwidth)
+- [ ] Usage statistics and analytics in dashboard
+- [ ] Backup and recovery procedures / tooling
+- [ ] Multi-region deployment tooling
 
-### 4. Monitoring & Analytics
-- [ ] Web dashboard for monitoring
-- [ ] Usage statistics and analytics
-- [ ] Error logging and alerting
-- [ ] Performance monitoring
-
-### 5. Production Features
-- [ ] Docker containerization
-- [ ] Configuration management
-- [ ] Backup and recovery
-- [ ] Multi-region deployment
-- [ ] Encrypted heartbeat data
-
-### 5. Monitoring & Analytics
-
-- [ ] Node performance tracking
-- [ ] Usage statistics
-- [ ] Error logging and alerting
-- [ ] Bandwidth monitoring
-
-### 6. Client Libraries/Tools
-
-- [ ] Command-line client tool
+### Product & integrations
+- [ ] CLI client (removed; use `curl` or custom client against API)
 - [ ] Client libraries (Go, Python, etc.)
-- [ ] Web dashboard for monitoring
-- [ ] Proxy testing utilities
+- [ ] Smart proxy selection and failover beyond `/api/nodes/random`
+- [ ] Proxy testing utilities in dashboard
+- [ ] Docker images and CI/CD pipeline
 
-### 7. Database Integration
-
-- [ ] Store node metadata persistently
-- [ ] Track usage statistics
-- [ ] Maintain node health records
-
-### 8. Configuration Management
-
-- [ ] Environment-specific configs
-- [ ] Dynamic configuration updates
-- [ ] Service discovery
-
-### 9. Error Handling & Recovery
-
-- [ ] Graceful node failures
-- [ ] Automatic service restart
-- [ ] Connection retry logic
-- [ ] Backup node systems
-
-### 10. Deployment & Scaling
-
-- [ ] Docker containerization
-- [ ] CI/CD pipeline
-- [ ] Multi-region deployment
-- [ ] Auto-scaling capabilities
+### Minor / polish
+- [ ] Align env var names with ROADMAP `TRINITY_*` convention (`API_PORT` vs `TRINITY_API_PORT`) — documented, not blocking
+- [ ] Graceful node failure handling beyond 5-minute offline timeout

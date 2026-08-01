@@ -3,6 +3,39 @@
 # TrinityProxy Cleanup Script
 # Removes old installation for clean reinstall
 
+NONINTERACTIVE=0
+if [[ "${TRINITY_NONINTERACTIVE:-}" == "1" ]]; then
+    NONINTERACTIVE=1
+fi
+
+usage() {
+    cat <<EOF
+Usage: $0 [--yes]
+
+Options:
+  --yes, -y                 Skip confirmation prompts (for scripted cleanup)
+  TRINITY_NONINTERACTIVE=1  Same as --yes
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --yes|-y)
+            NONINTERACTIVE=1
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            usage >&2
+            exit 1
+            ;;
+    esac
+done
+
 echo "[+] TrinityProxy Cleanup Script"
 echo "==============================="
 echo "[!] This will remove ALL TrinityProxy files and services"
@@ -10,10 +43,14 @@ echo "[!] Make sure to backup any important data first"
 echo ""
 
 # Ask for confirmation
-read -p "[?] Are you sure you want to remove TrinityProxy? (y/N): " confirm
-if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
-    echo "[*] Cleanup cancelled"
-    exit 0
+if [[ "$NONINTERACTIVE" != "1" ]]; then
+    read -p "[?] Are you sure you want to remove TrinityProxy? (y/N): " confirm
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        echo "[*] Cleanup cancelled"
+        exit 0
+    fi
+else
+    echo "[*] Non-interactive mode: proceeding without confirmation"
 fi
 
 echo ""
@@ -24,17 +61,33 @@ green() { echo -e "\e[32m$1\e[0m"; }
 yellow() { echo -e "\e[33m$1\e[0m"; }
 red() { echo -e "\e[31m$1\e[0m"; }
 
-# Stop all TrinityProxy services
+# Stop all TrinityProxy services (current + legacy)
+SERVICES=(
+    trinityproxy-agent
+    trinityproxy-controller
+    trinityproxy
+)
+
 echo "[*] Stopping TrinityProxy services..."
-systemctl stop trinityproxy 2>/dev/null || true
-systemctl disable trinityproxy 2>/dev/null || true
+for svc in "${SERVICES[@]}"; do
+    systemctl stop "$svc" 2>/dev/null || true
+    systemctl disable "$svc" 2>/dev/null || true
+done
 green "[✔] Services stopped"
 
-# Remove systemd service file
-echo "[*] Removing systemd service..."
-rm -f /etc/systemd/system/trinityproxy.service
+# Remove systemd service files
+UNIT_FILES=(
+    /etc/systemd/system/trinityproxy-agent.service
+    /etc/systemd/system/trinityproxy-controller.service
+    /etc/systemd/system/trinityproxy.service
+)
+
+echo "[*] Removing systemd service files..."
+for unit in "${UNIT_FILES[@]}"; do
+    rm -f "$unit"
+done
 systemctl daemon-reload
-green "[✔] Systemd service removed"
+green "[✔] Systemd service files removed"
 
 # Remove configuration files
 echo "[*] Removing configuration files..."
@@ -113,10 +166,19 @@ rm -f /etc/profile.d/trinityproxy.sh
 
 green "[✔] Environment variables cleaned"
 
-# Optional: Remove Dante server (ask user)
-echo ""
-read -p "[?] Remove Dante SOCKS5 server? (y/N): " remove_dante
-if [[ "$remove_dante" =~ ^[Yy]$ ]]; then
+# Optional: Remove Dante server (ask user unless non-interactive)
+remove_dante=false
+if [[ "$NONINTERACTIVE" == "1" ]]; then
+    yellow "[!] Non-interactive mode: keeping Dante server"
+else
+    echo ""
+    read -p "[?] Remove Dante SOCKS5 server? (y/N): " remove_dante_answer
+    if [[ "$remove_dante_answer" =~ ^[Yy]$ ]]; then
+        remove_dante=true
+    fi
+fi
+
+if [[ "$remove_dante" == "true" ]]; then
     echo "[*] Removing Dante server..."
     if command -v apt-get >/dev/null 2>&1; then
         apt-get remove --purge -y dante-server 2>/dev/null || true
@@ -132,10 +194,19 @@ else
     yellow "[!] Dante server kept (can be used by new installation)"
 fi
 
-# Optional: Remove Go installation (ask user)
-echo ""
-read -p "[?] Remove Go installation? (y/N): " remove_go
-if [[ "$remove_go" =~ ^[Yy]$ ]]; then
+# Optional: Remove Go installation (ask user unless non-interactive)
+remove_go=false
+if [[ "$NONINTERACTIVE" == "1" ]]; then
+    yellow "[!] Non-interactive mode: keeping Go installation"
+else
+    echo ""
+    read -p "[?] Remove Go installation? (y/N): " remove_go_answer
+    if [[ "$remove_go_answer" =~ ^[Yy]$ ]]; then
+        remove_go=true
+    fi
+fi
+
+if [[ "$remove_go" == "true" ]]; then
     echo "[*] Removing Go installation..."
     rm -rf /usr/local/go
     sed -i '/\/usr\/local\/go\/bin/d' ~/.bashrc 2>/dev/null || true
