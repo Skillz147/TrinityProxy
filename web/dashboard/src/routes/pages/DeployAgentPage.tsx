@@ -309,6 +309,21 @@ export function DeployAgentPage() {
                     )}
                   </div>
 
+                  {selectedPlatform.id === "windows" && (
+                    <div className="flex items-start gap-2.5 rounded-md border border-primary/30 bg-primary/5 p-3 text-sm text-muted-foreground">
+                      <Monitor className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                      <p>
+                        Copy the command below and paste it into{" "}
+                        <strong className="text-foreground">elevated PowerShell</strong>{" "}
+                        (Run as administrator). It clones the installer to{" "}
+                        <code className="text-xs">%TEMP%\TrinityProxy</code>, builds the
+                        agent if needed, and registers the Windows service — no manual{" "}
+                        <code className="text-xs">git clone</code> or{" "}
+                        <code className="text-xs">cd</code> required.
+                      </p>
+                    </div>
+                  )}
+
                   {selectedPlatform.prerequisites && (
                     <div className="flex items-start gap-2.5 rounded-md border border-border/50 bg-muted/30 p-3 text-sm text-muted-foreground">
                       <Info className="mt-0.5 h-4 w-4 shrink-0 text-primary/70" />

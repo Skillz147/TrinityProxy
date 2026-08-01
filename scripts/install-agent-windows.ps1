@@ -19,6 +19,9 @@
     TRINITY_DOWNLOAD_URL=https://.../trinityproxy.exe  Download instead of copy
     TRINITY_INSTALL_DIR=C:\Program Files\TrinityProxy  Override install folder
 
+  Paste-and-run: use the one-liner from the dashboard Deploy Agent page (elevated PowerShell).
+  The installer clones to %TEMP%\TrinityProxy when needed and builds the agent with Go if no binary is present.
+
   Run in an elevated PowerShell (Run as administrator).
 
   Build the Windows binary on macOS/Linux:
@@ -71,6 +74,101 @@ function Test-Admin {
 function Test-NonInteractive {
     if ($env:TRINITY_NONINTERACTIVE -eq "1") { return $true }
     return $false
+}
+
+
+function Test-InRepoScriptsDir {
+    if (-not $PSScriptRoot) { return $false }
+    if ((Split-Path -Leaf $PSScriptRoot) -ne "scripts") { return $false }
+    $repoRoot = Split-Path -Parent $PSScriptRoot
+    return (Test-Path -LiteralPath (Join-Path $repoRoot "go.mod"))
+}
+
+function Invoke-BootstrapRepoAndReenter {
+    $repoURL = if ($env:TRINITY_REPO_URL) { $env:TRINITY_REPO_URL.Trim() } else { "https://github.com/Skillz147/TrinityProxy.git" }
+    $cloneDir = Join-Path $env:TEMP "TrinityProxy"
+    $installer = Join-Path $cloneDir "scripts\install-agent-windows.ps1"
+
+    Write-Step "Preparing TrinityProxy installer (one-time download)..."
+    $git = Get-Command git -ErrorAction SilentlyContinue
+    if (-not $git) {
+        Write-Fail "Git is required for the paste-and-run installer."
+        Write-Host ""
+        Write-Host "Install Git for Windows, then run the dashboard command again:"
+        Write-Host "  https://git-scm.com/download/win"
+        Write-Host ""
+        Write-Host "Or clone manually and run scripts\install-agent-windows.ps1 from the repo."
+        exit 1
+    }
+
+    if (-not (Test-Path -LiteralPath (Join-Path $cloneDir ".git"))) {
+        Write-Host "   Cloning $repoURL (depth 1) to $cloneDir"
+        if (Test-Path -LiteralPath $cloneDir) {
+            Remove-Item -LiteralPath $cloneDir -Recurse -Force
+        }
+        & git clone --depth 1 $repoURL $cloneDir
+        if ($LASTEXITCODE -ne 0) {
+            Write-Fail "git clone failed (exit $LASTEXITCODE)."
+            exit 1
+        }
+    }
+
+    if (-not (Test-Path -LiteralPath $installer)) {
+        Write-Fail "Installer script missing after clone: $installer"
+        exit 1
+    }
+
+    Write-Ok "Running installer from $cloneDir"
+    $argList = @()
+    if ($ControllerUrl) { $argList += "-ControllerUrl"; $argList += $ControllerUrl }
+    if ($AgentKey) { $argList += "-AgentKey"; $argList += $AgentKey }
+    if ($SocksPort) { $argList += "-SocksPort"; $argList += $SocksPort }
+    if ($LocalBinary) { $argList += "-LocalBinary"; $argList += $LocalBinary }
+    if ($DownloadUrl) { $argList += "-DownloadUrl"; $argList += $DownloadUrl }
+    if ($InstallDir) { $argList += "-InstallDir"; $argList += $InstallDir }
+    if ($UseScheduledTask) { $argList += "-UseScheduledTask" }
+
+    & $installer @argList
+    exit $LASTEXITCODE
+}
+
+function Try-Build-WindowsBinary {
+    $repoRoot = Split-Path -Parent $PSScriptRoot
+    if (-not (Test-Path -LiteralPath (Join-Path $repoRoot "go.mod"))) {
+        return $null
+    }
+
+    $outDir = Join-Path $repoRoot "build"
+    $out = Join-Path $outDir $BinaryName
+    $go = Get-Command go -ErrorAction SilentlyContinue
+    if (-not $go) {
+        return $null
+    }
+
+    Write-Step "Building $BinaryName with Go (windows/amd64 — may take a few minutes)..."
+    New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+    Push-Location $repoRoot
+    try {
+        $prevGOOS = $env:GOOS
+        $prevGOARCH = $env:GOARCH
+        $env:GOOS = "windows"
+        $env:GOARCH = "amd64"
+        & go build -o $out .
+        if ($LASTEXITCODE -ne 0) {
+            throw "go build failed (exit $LASTEXITCODE)"
+        }
+    }
+    finally {
+        if ($null -eq $prevGOOS) { Remove-Item Env:GOOS -ErrorAction SilentlyContinue } else { $env:GOOS = $prevGOOS }
+        if ($null -eq $prevGOARCH) { Remove-Item Env:GOARCH -ErrorAction SilentlyContinue } else { $env:GOARCH = $prevGOARCH }
+        Pop-Location
+    }
+
+    if (Test-Path -LiteralPath $out) {
+        Write-Ok "Built $BinaryName"
+        return (Resolve-Path -LiteralPath $out).Path
+    }
+    return $null
 }
 
 function Assert-RepoScriptLocation {
@@ -149,13 +247,18 @@ function Resolve-SourceBinary {
         return $tempFile
     }
 
+    $built = Try-Build-WindowsBinary
+    if ($built) {
+        return $built
+    }
+
     throw @"
 Could not find trinityproxy.exe.
 
-Build it on your dev machine:
-  make build-windows-agent
-
-Then copy build/trinityproxy.exe to this PC and either:
+Options:
+  - Install Go on this PC and re-run (the installer will build automatically), or
+  - Build on another machine: make build-windows-agent, then set TRINITY_LOCAL_BINARY or TRINITY_DOWNLOAD_URL, or
+  - Place build\trinityproxy.exe in the cloned repo under build\
   - Place it next to this script under build/trinityproxy.exe, or
   - Set TRINITY_LOCAL_BINARY to the full path, or
   - Set TRINITY_DOWNLOAD_URL to a direct download link.
@@ -284,6 +387,10 @@ function Start-AgentBackground([string]$WrapperPath) {
 }
 
 # --- Main ---
+
+if (-not (Test-InRepoScriptsDir)) {
+    Invoke-BootstrapRepoAndReenter
+}
 
 Assert-RepoScriptLocation
 

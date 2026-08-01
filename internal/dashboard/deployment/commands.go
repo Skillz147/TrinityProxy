@@ -6,6 +6,8 @@ import (
 )
 
 const (
+	githubRepoCloneURL = "https://github.com/Skillz147/TrinityProxy.git"
+
 	localControllerURL  = "http://127.0.0.1:3100"
 	dockerControllerURL = "http://host.docker.internal:3100"
 )
@@ -60,11 +62,11 @@ func BuildDeployCommands(settings *Settings, envFallback, agentKey string) Deplo
 		{
 			ID:            "windows",
 			Label:         "Windows",
-			Description:   "Install as a Windows service with embedded SOCKS5 proxy (Go-based, no Dante).",
+			Description:   "One paste in elevated PowerShell: clones the installer to %TEMP%, builds or downloads the agent binary, and registers a Windows service with embedded SOCKS5.",
 			ControllerURL: productionURL,
 			Command:       windowsCommand(productionURL, agentKey),
 			RunAs:         "Administrator (elevated PowerShell)",
-			Prerequisites: "Clone the TrinityProxy repo, cd to repo root, then run the script in elevated PowerShell. Provide build\\trinityproxy.exe (make build-windows-agent) or set TRINITY_DOWNLOAD_URL / TRINITY_LOCAL_BINARY.",
+			Prerequisites: "Git for Windows (for first-time install). Run the command in elevated PowerShell — no manual clone or cd. Optional: pre-copy build\\trinityproxy.exe via TRINITY_LOCAL_BINARY or TRINITY_DOWNLOAD_URL to skip Go build.",
 		},
 		{
 			ID:            "docker",
@@ -119,6 +121,21 @@ curl -fsSL https://raw.githubusercontent.com/Skillz147/TrinityProxy/main/scripts
 	)
 }
 
+func psSingleQuoted(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+}
+
+func windowsBootstrapOneLiner(controllerURL, agentKey string) string {
+	cloneURL := psSingleQuoted(githubRepoCloneURL)
+	ctrl := psSingleQuoted(controllerURL)
+	inner := fmt.Sprintf("$env:CONTROLLER_URL=%s; $env:TRINITY_NONINTERACTIVE='1'", ctrl)
+	if agentKey != "" {
+		inner += fmt.Sprintf("; $env:TRINITY_AGENT_KEY=%s", psSingleQuoted(agentKey))
+	}
+	inner += fmt.Sprintf("; $d=Join-Path $env:TEMP 'TrinityProxy'; if(-not(Test-Path (Join-Path $d '.git'))){ git clone --depth 1 %s $d; if($LASTEXITCODE -ne 0){ throw 'git clone failed. Install Git for Windows from https://git-scm.com/download/win' } }; & (Join-Path $d 'scripts\\install-agent-windows.ps1')", cloneURL)
+	return "& { " + inner + " }"
+}
+
 func macOSCommand(controllerURL, agentKey string) string {
 	if agentKey == "" {
 		return fmt.Sprintf(`# Save Settings first, then run:
@@ -136,25 +153,14 @@ CONTROLLER_URL=%q TRINITY_AGENT_KEY=%q ./scripts/install-agent-macos.sh`, contro
 }
 
 func windowsCommand(controllerURL, agentKey string) string {
-	repoClone := `# Clone the repo (skip if you already have it), then use the repo root — not your home folder:
-git clone https://github.com/Skillz147/TrinityProxy.git
-cd TrinityProxy
-
-# Run in elevated PowerShell (Run as administrator).
-# Needs build\trinityproxy.exe under the repo, or set TRINITY_DOWNLOAD_URL / TRINITY_LOCAL_BINARY.`
-
+	line := windowsBootstrapOneLiner(controllerURL, agentKey)
 	if agentKey == "" {
 		return fmt.Sprintf(`# Save Settings first to generate an agent key, then refresh this page.
-%s
-$env:TRINITY_NONINTERACTIVE = "1"
-$env:CONTROLLER_URL = %q
-.\scripts\install-agent-windows.ps1`, repoClone, controllerURL)
+# Paste into elevated PowerShell (Run as administrator):
+%s`, line)
 	}
-	return fmt.Sprintf(`%s
-$env:TRINITY_NONINTERACTIVE = "1"
-$env:CONTROLLER_URL = %q
-$env:TRINITY_AGENT_KEY = %q
-.\scripts\install-agent-windows.ps1`, repoClone, controllerURL, agentKey)
+	return fmt.Sprintf(`# Paste into elevated PowerShell (Run as administrator):
+%s`, line)
 }
 
 func dockerDevCommand() string {

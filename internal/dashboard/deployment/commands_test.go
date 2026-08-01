@@ -74,3 +74,44 @@ func findPlatform(platforms []DeployPlatform, id string) DeployPlatform {
 	}
 	return DeployPlatform{}
 }
+
+func TestWindowsBootstrapOneLiner(t *testing.T) {
+	settings := &Settings{
+		PublicDomain: "example.com",
+		SSLMode:      SSLModeCaddy,
+	}
+	commands := BuildDeployCommands(settings, "", "secret-key-abc")
+	win := findPlatform(commands.Platforms, "windows")
+	if win.ID != "windows" {
+		t.Fatalf("windows platform missing")
+	}
+	if !strings.Contains(win.Command, "secret-key-abc") {
+		t.Errorf("windows command missing agent key")
+	}
+	if !strings.Contains(win.Command, "git clone --depth 1") {
+		t.Errorf("windows command missing shallow clone")
+	}
+	if !strings.Contains(win.Command, "install-agent-windows.ps1") {
+		t.Errorf("windows command missing installer script")
+	}
+	if !strings.Contains(win.Command, "Join-Path $env:TEMP 'TrinityProxy'") {
+		t.Errorf("windows command missing TEMP clone path")
+	}
+	if strings.Contains(win.Command, ".\\scripts\\install-agent-windows.ps1") {
+		t.Errorf("windows command should not require manual cd to repo")
+	}
+	if !strings.Contains(win.Command, commands.ProductionControllerURL) {
+		t.Errorf("windows command missing controller URL")
+	}
+	one := windowsBootstrapOneLiner(commands.ProductionControllerURL, "secret-key-abc")
+	if strings.Contains(one, "\n") {
+		t.Errorf("bootstrap one-liner should be a single line")
+	}
+}
+
+func TestWindowsBootstrapOneLinerNoKey(t *testing.T) {
+	line := windowsBootstrapOneLiner("https://api.example.com", "")
+	if strings.Contains(line, "TRINITY_AGENT_KEY") {
+		t.Errorf("no-key one-liner should not set TRINITY_AGENT_KEY")
+	}
+}
