@@ -114,12 +114,6 @@ else
 fi
 
 # Controller-only bootstrap sets TRINITY_SKIP_DANTE=1 (no sockd on controller VPS).
-if [[ "${TRINITY_SKIP_DANTE:-}" == "1" ]]; then
-  yellow "[*] Skipping Dante (TRINITY_SKIP_DANTE=1 — controller-only host)"
-elif command -v sockd >/dev/null 2>&1; then
-  green "[✔] Dante (sockd) is already installed"
-else
-# Check Dante SOCKS5 server (agents only — controller-only VPS can skip)
 install_dante() {
   local pkg="$1"
   yellow "[*] Trying Dante package: $pkg"
@@ -129,7 +123,9 @@ install_dante() {
   return 1
 }
 
-if command -v sockd >/dev/null 2>&1; then
+if [[ "${TRINITY_SKIP_DANTE:-}" == "1" ]]; then
+  yellow "[*] Skipping Dante (TRINITY_SKIP_DANTE=1 — controller-only host)"
+elif command -v sockd >/dev/null 2>&1; then
   green "[✔] Dante (sockd) is already installed"
 else
   yellow "[!] Dante not found. Installing (optional for controller-only VPS)..."

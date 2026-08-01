@@ -12,7 +12,7 @@ This guide covers running the controller API, dashboard, and agents on your mach
 | Docker Desktop (Mac) | Optional — run a Linux agent container (`make docker-agent`) |
 
 ```bash
-make quickstart          # Go dependencies + binaries (first time)
+make deps && make build    # Go dependencies + binaries (first time)
 ```
 
 ---
@@ -20,13 +20,13 @@ make quickstart          # Go dependencies + binaries (first time)
 ## Dashboard — one command
 
 ```bash
-make start
+make start-dev
 # Open http://localhost:8080
 ```
 
 Press **Ctrl+C** or run `make stop` when you're done.
 
-`make start` automatically:
+`make start-dev` automatically:
 
 - Builds the dashboard binary if needed
 - Installs npm dependencies on first run
@@ -36,7 +36,7 @@ Press **Ctrl+C** or run `make stop` when you're done.
 
 ### First time
 
-1. Run `make start`
+1. Run `make start-dev`
 2. Log in with the credentials printed in the terminal
 3. Change your password when prompted
 4. **Settings** → enter your domain → **Save**
@@ -83,7 +83,7 @@ make run-controller
 # or: make build && ./build/trinityproxy-api
 ```
 
-If you saved deployment settings in the dashboard, `make start` may have already written `.env.controller`. Load it before starting the controller:
+If you saved deployment settings in the dashboard, `make start-dev` may have already written `.env.controller`. Load it before starting the controller:
 
 ```bash
 set -a && source .env.controller && set +a
@@ -154,7 +154,7 @@ export CONTROLLER_URL=https://api.trinityproxy.local
 # Reverse-proxy :443 → 127.0.0.1:3100 using CERT_FILE / KEY_FILE from mkcert setup
 ```
 
-Set `CONTROLLER_URL` before `make start` so deploy/bootstrap scripts reference your local controller.
+Set `CONTROLLER_URL` before `make start-dev` so deploy/bootstrap scripts reference your local controller.
 
 ---
 
@@ -164,7 +164,7 @@ When the controller runs on a VPS, use its IP or DNS name directly:
 
 ```bash
 export CONTROLLER_URL=http://<vps-ip>:3100
-make start    # dashboard on your laptop, controller on VPS
+make start-dev    # dashboard on your laptop, controller on VPS
 ```
 
 Examples:
@@ -228,7 +228,7 @@ Simulates a real Linux VPS agent without installing Dante on macOS. Requires [Do
 
 ```bash
 # Terminal 1 — dashboard
-make start
+make start-dev
 
 # Terminal 2 — controller API (loads .env.controller)
 make start-controller
@@ -268,7 +268,7 @@ Heartbeats POST to `{CONTROLLER_URL}/api/heartbeat` every 60s (override with `HE
 
 | Service | Default port | Start command |
 |---------|--------------|---------------|
-| Dashboard (API + UI) | 8080 / 8081 | `make start` |
+| Dashboard (API + UI) | 8080 / 8081 | `make start-dev` |
 | Controller API | 3100 | `make run-controller` |
 | Agent (macOS dev) | 1080 (SOCKS) | `make run-agent-dev` |
 | Agent (Docker/Linux sim) | — | `make docker-agent` |
@@ -279,7 +279,7 @@ Heartbeats POST to `{CONTROLLER_URL}/api/heartbeat` every 60s (override with `HE
 
 | Command | Purpose |
 |---------|---------|
-| `make start` | Start dashboard dev (recommended) |
+| `make start-dev` | Start dashboard dev (recommended) |
 | `make stop` | Stop dashboard dev servers |
 | `make run-agent-dev` | macOS/local agent — embedded SOCKS :1080, foreground |
 | `make docker-agent` | Linux agent in Docker — simulates VPS on Mac |
@@ -303,11 +303,11 @@ lsof -ti:8080 -ti:8081 -ti:3100
 
 **Dashboard API on wrong port**
 
-If something stale is bound to `:8080`, run `make stop` and try `make start` again.
+If something stale is bound to `:8080`, run `make stop` and try `make start-dev` again.
 
 **Vite cannot reach API**
 
-Ensure `make start` is running (or Terminal 1 has `make run-dashboard`) and `VITE_API_PROXY_TARGET` matches (default `http://127.0.0.1:8081`).
+Ensure `make start-dev` is running (or Terminal 1 has `make run-dashboard`) and `VITE_API_PROXY_TARGET` matches (default `http://127.0.0.1:8081`).
 
 **mkcert not trusted**
 

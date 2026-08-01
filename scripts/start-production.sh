@@ -90,7 +90,18 @@ ensure_system_deps() {
 	ensure_command git git
 	ensure_command wget wget
 	ensure_command sqlite3 sqlite3 sqlite
-	ensure_command gcc build-essential gcc "gcc-c++" base-devel build-base
+	if command -v gcc >/dev/null 2>&1; then
+		echo "[+] gcc present"
+	elif command -v apt-get >/dev/null 2>&1; then
+		ensure_command gcc build-essential
+	elif command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; then
+		ensure_command gcc gcc
+		command -v g++ >/dev/null 2>&1 || install_pkg gcc-c++ || true
+	elif command -v pacman >/dev/null 2>&1; then
+		ensure_command gcc base-devel
+	elif command -v apk >/dev/null 2>&1; then
+		ensure_command gcc build-base
+	fi
 }
 
 ensure_go() {

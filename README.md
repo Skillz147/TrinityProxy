@@ -1,6 +1,6 @@
 # TrinityProxy
 
-Distributed SOCKS5 proxy network with a central controller, web dashboard, and agent nodes. The controller registers agents via heartbeats; the dashboard manages settings, SSL, and deployment.
+Distributed SOCKS5 proxy network with a central controller, web dashboard, and agent nodes.
 
 **Status:** [ROADMAP.md](ROADMAP.md) · [MISSING_COMPONENTS.md](MISSING_COMPONENTS.md)
 
@@ -10,7 +10,7 @@ Distributed SOCKS5 proxy network with a central controller, web dashboard, and a
 
 | Command | Where | What it does |
 |---------|-------|--------------|
-| **`sudo make start`** | Linux VPS | Installs deps, builds binaries, writes secrets to `/etc/trinityproxy/`, installs systemd services, starts them, prints login credentials |
+| **`sudo make start`** | Linux VPS | Installs deps, builds, writes `/etc/trinityproxy/` secrets, starts systemd, prints credentials |
 | **`make start-dev`** | Your laptop | Dashboard UI + API + controller for local development |
 
 Stop: `make stop-production` (VPS) · `make stop` (dev)
@@ -19,7 +19,7 @@ Stop: `make stop-production` (VPS) · `make stop` (dev)
 
 ## Production VPS
 
-**Prerequisites:** Fresh Linux VPS with `git`, `curl`, and `sudo` (Ubuntu/Debian recommended)
+**Prerequisites:** Fresh Linux VPS with `git`, `curl`, `sudo`
 
 ```bash
 git clone https://github.com/Skillz147/TrinityProxy.git
@@ -27,32 +27,19 @@ cd TrinityProxy
 sudo make start
 ```
 
-`make start` runs `scripts/setup.sh` (Go, build tools; Dante is optional on controller-only hosts) then `scripts/install-production.sh`. It:
+Runs `scripts/setup.sh` (Go, build tools; Dante optional on controller-only hosts) then `scripts/install-production.sh`:
 
-- Builds binaries (UI embedded in dashboard — no Node.js on the VPS)
-- Writes auto-generated secrets to `/etc/trinityproxy/controller.env` (`TRINITY_API_KEY`, `TRINITY_AGENT_KEY`, `CONTROLLER_URL`)
-- Bootstraps the dashboard admin and saves credentials to `/etc/trinityproxy/dashboard-admin.txt` (mode 600)
-- Installs and starts `trinityproxy-controller` and `trinityproxy-dashboard`
+- Builds binaries (UI embedded — no Node.js on VPS)
+- Writes secrets to `/etc/trinityproxy/controller.env` and admin creds to `dashboard-admin.txt`
+- Starts `trinityproxy-controller` (`:3100`) and `trinityproxy-dashboard` (`:8081`)
 
-| Service | Port | Role |
-|---------|------|------|
-| `trinityproxy-controller` | `:3100` | Node registry, heartbeats, SOCKS probes |
-| `trinityproxy-dashboard` | `:8081` | Admin API + built React UI |
+**Then:** log in → **Settings** (domain) → **Cloudflare SSL** → **Deploy Agent**
 
 ```bash
 sudo systemctl status trinityproxy-controller trinityproxy-dashboard
 ```
 
-**Then in the dashboard** (http://your-vps-ip:8081):
-
-1. Log in with the credentials printed at install
-2. **Settings** → set your public domain → Save
-3. **Settings → Cloudflare SSL** — provision HTTPS (or `scripts/setup-ssl-caddy-cloudflare.sh`)
-4. **Deploy Agent** — copy the install command for each agent VPS
-
-Point DNS at your VPS. Caddy reverse-proxies `api.yourdomain.com` → `:3100` and `yourdomain.com` → `:8081`.
-
-Advanced: `make install-production` (skip system deps) · `make install-service` / `make install-dashboard-service` (single service)
+Advanced: `make install-production` (skip system deps) · `make install-service` / `make install-dashboard-service`
 
 ---
 
@@ -66,30 +53,19 @@ cd TrinityProxy
 make start-dev
 ```
 
-Open **http://localhost:8080** and log in. `make start-dev` launches:
+Open **http://localhost:8080**. `make start-dev` starts Vite `:8080`, dashboard API `:8081`, controller `:3100`.
 
-| Service | Port |
-|---------|------|
-| Dashboard UI (Vite) | `:8080` |
-| Dashboard API | `:8081` |
-| Controller API | `:3100` |
+First run prints admin credentials. Then: change password → **Settings** → **Deploy Agent**.
 
-First run prints admin credentials once. Then: change password → **Settings** (domain) → **Deploy Agent**.
-
-**macOS agent (same machine):** `make run-agent-dev` (embedded SOCKS `:1080`)
-
-More: [docs/DEV_SETUP.md](docs/DEV_SETUP.md)
+**macOS agent:** `make run-agent-dev` (embedded SOCKS `:1080`) · More: [docs/DEV_SETUP.md](docs/DEV_SETUP.md)
 
 ---
 
 ## Agents
 
-- **Linux VPS** — curl one-liner from **Deploy Agent**, or:
-  ```bash
-  sudo CONTROLLER_URL=https://api.example.com TRINITY_AGENT_KEY=<key> ./scripts/install-agent-service.sh
-  ```
-- **Windows** — `make build-windows-agent`, then `scripts/install-agent-windows.ps1` ([docs/WINDOWS_AGENT.md](docs/WINDOWS_AGENT.md))
-- **macOS dev** — `make run-agent-dev` or `make install-agent-macos` (launchd)
+- **Linux VPS** — curl one-liner from **Deploy Agent**, or `sudo CONTROLLER_URL=... TRINITY_AGENT_KEY=... ./scripts/install-agent-service.sh`
+- **Windows** — `make build-windows-agent` + `scripts/install-agent-windows.ps1` ([docs/WINDOWS_AGENT.md](docs/WINDOWS_AGENT.md))
+- **macOS** — `make run-agent-dev` or `make install-agent-macos`
 
 ---
 
@@ -97,10 +73,10 @@ More: [docs/DEV_SETUP.md](docs/DEV_SETUP.md)
 
 | State | Meaning |
 |-------|---------|
-| **Online** | Heartbeat received in the last 5 minutes |
-| **Healthy** | Controller completed a SOCKS5 auth probe to the agent's `ip:port` |
+| **Online** | Heartbeat in last 5 minutes |
+| **Healthy** | SOCKS5 auth probe succeeded |
 
-A node can be online but unhealthy (heartbeat works, SOCKS unreachable). In dev, probes retry via `127.0.0.1` automatically.
+Nodes can be online but unhealthy. Dev probes retry via `127.0.0.1` automatically.
 
 ---
 
@@ -108,13 +84,13 @@ A node can be online but unhealthy (heartbeat works, SOCKS unreachable). In dev,
 
 | Variable | Used by | Purpose |
 |----------|---------|---------|
-| `TRINITY_AGENT_KEY` | Controller + agents | Authenticates heartbeats |
-| `CONTROLLER_URL` | Agents + dashboard | Base URL agents call |
-| `TRINITY_API_KEY` | API clients | Auth for `GET /api/nodes*` |
-| `DASHBOARD_PORT` | Dashboard | Listen port (default `8081`) |
-| `DB_PATH` | Controller | Node registry SQLite path |
+| `TRINITY_AGENT_KEY` | Controller + agents | Heartbeat auth |
+| `CONTROLLER_URL` | Agents + dashboard | Controller base URL |
+| `TRINITY_API_KEY` | API clients | `GET /api/nodes*` auth |
+| `DASHBOARD_PORT` | Dashboard | Default `8081` |
+| `DB_PATH` | Controller | Node registry SQLite |
 
-Production secrets live under `/etc/trinityproxy/` (auto-generated by `make start`). Dev uses `.env.controller` — `make start-dev` syncs the agent key automatically.
+Production secrets: `/etc/trinityproxy/` (auto-generated by `make start`). Dev: `.env.controller` (synced by `make start-dev`).
 
 Full reference: [docs/ENV.md](docs/ENV.md)
 
@@ -123,8 +99,8 @@ Full reference: [docs/ENV.md](docs/ENV.md)
 ## Build & troubleshooting
 
 ```bash
-make build                  # build/trinityproxy, trinityproxy-api, trinityproxy-dashboard
-make stop && make start-dev # restart dev stack
+make build
+make stop && make start-dev    # restart dev stack
 curl http://localhost:3100/health
 sudo journalctl -u trinityproxy-controller -f
 ```
@@ -132,7 +108,7 @@ sudo journalctl -u trinityproxy-controller -f
 | Symptom | Fix |
 |---------|-----|
 | Heartbeat 401 | `make sync-agent-key`, restart controller |
-| Agent online, unhealthy (prod) | Open SOCKS port on agent firewall |
+| Agent online, unhealthy | Open SOCKS port on agent firewall |
 | Port in use | `make stop` or `make stop-production` |
 
 ---

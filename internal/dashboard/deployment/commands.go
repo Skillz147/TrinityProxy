@@ -72,7 +72,7 @@ func BuildDeployCommands(settings *Settings, envFallback, agentKey string) Deplo
 			Description:   "Run a Linux agent container on your Mac to simulate a VPS. Heartbeats reach the controller on your host.",
 			ControllerURL: dockerControllerURL,
 			Command:       dockerDevCommand(),
-			Prerequisites: "Docker Desktop installed. Controller running locally. Run make sync-agent-key first.",
+			Prerequisites: "Docker Desktop installed. Run make start-dev (or make sync-agent-key) with controller running locally.",
 		},
 		{
 			ID:            "mac-dev",
@@ -80,7 +80,7 @@ func BuildDeployCommands(settings *Settings, envFallback, agentKey string) Deplo
 			Description:   "Foreground dev agent with embedded SOCKS on :1080 — no install, no Dante. Ideal while developing on macOS.",
 			ControllerURL: localURL,
 			Command:       macDevCommand(),
-			Prerequisites: "Controller running locally. Run make sync-agent-key so .env.controller has TRINITY_AGENT_KEY.",
+			Prerequisites: "Run make start-dev in another terminal, then make sync-agent-key if needed.",
 		},
 	}
 
@@ -151,7 +151,8 @@ $env:TRINITY_AGENT_KEY = %q
 }
 
 func dockerDevCommand() string {
-	return `make sync-agent-key
+	return `make start-dev    # controller on :3100 (another terminal)
+make sync-agent-key
 make docker-agent
 
 # Logs:  docker logs -f trinityproxy-agent-dev
@@ -159,6 +160,6 @@ make docker-agent
 }
 
 func macDevCommand() string {
-	return `make sync-agent-key
+	return `make start-dev    # controller on :3100 (another terminal)
 make run-agent-dev`
 }
