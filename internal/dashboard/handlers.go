@@ -84,6 +84,8 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	dashauth.SetSessionCookie(w, r, result.Token, s.cfg.SessionTTL)
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"token":                result.Token,
 		"must_change_password": result.MustChangePassword,
@@ -93,9 +95,9 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	token := s.middleware.ExtractToken(r)
-	if err := s.auth.Logout(token); err != nil {
-		writeJSONError(w, http.StatusUnauthorized, "invalid session")
-		return
+	dashauth.ClearSessionCookie(w, r)
+	if token != "" {
+		_ = s.auth.Logout(token)
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "logged_out"})
 }
@@ -106,6 +108,14 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
+
+	token := s.middleware.ExtractToken(r)
+	if token != "" {
+		if err := s.auth.TouchSession(token); err == nil {
+			dashauth.SetSessionCookie(w, r, token, s.cfg.SessionTTL)
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{"user": user})
 }
 
@@ -363,74 +373,14 @@ func (s *Server) handleDevSetup(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, setup)
 }
 
+const sslSetupDeprecatedMsg = "SSL and domain setup moved to the server. On your VPS run: sudo PUBLIC_DOMAIN=example.com CLOUDFLARE_API_TOKEN=your_token SERVER_IP=203.0.113.10 EMAIL=ssl@example.com SKIP_DNS_WAIT=1 /opt/trinityproxy/scripts/setup-ssl-caddy-cloudflare.sh"
+
 func (s *Server) handleCloudflareSetup(w http.ResponseWriter, r *http.Request) {
-	settings, err := s.deployment.Get()
-	if err != nil {
-		s.log.Error("failed to load deployment config", "err", err)
-		writeJSONError(w, http.StatusInternalServerError, "failed to load deployment config")
-		return
-	}
-
-	domain := settings.PublicDomain
-	if q := strings.TrimSpace(r.URL.Query().Get("domain")); q != "" {
-		domain = q
-	}
-
-	serverIP := s.serverPublicIP(r)
-	setup := deployment.BuildCloudflareSetup(domain, serverIP)
-	writeJSON(w, http.StatusOK, setup)
+	writeJSONError(w, http.StatusGone, sslSetupDeprecatedMsg)
 }
 
 func (s *Server) handleProvisionSSL(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Domain             string `json:"domain"`
-		CloudflareAPIToken string `json:"cloudflare_api_token"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid JSON")
-		return
-	}
-
-	req.Domain = strings.TrimSpace(req.Domain)
-	req.CloudflareAPIToken = strings.TrimSpace(req.CloudflareAPIToken)
-
-	if req.Domain == "" {
-		writeJSONError(w, http.StatusBadRequest, "domain is required")
-		return
-	}
-
-	normalized := deployment.NormalizeDomain(req.Domain)
-	if normalized == "" {
-		writeJSONError(w, http.StatusBadRequest, "invalid domain")
-		return
-	}
-
-	if req.CloudflareAPIToken == "" {
-		writeJSONError(w, http.StatusBadRequest, "cloudflare_api_token is required")
-		return
-	}
-
-	email := "ssl@" + normalized
-	serverIP := s.serverPublicIP(r)
-
-	s.log.Info("starting Cloudflare SSL provision unit", "domain", normalized, "email", email, "ip", serverIP)
-	out, err := runSSLProvision(r.Context(), sslProvisionParams{
-		Domain:             normalized,
-		Email:              email,
-		ServerIP:           serverIP,
-		CloudflareAPIToken: req.CloudflareAPIToken,
-	})
-	if err != nil {
-		s.log.Error("SSL provisioning failed", "err", err, "output", out)
-		writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("SSL provisioning failed: %v\nOutput:\n%s", err, out))
-		return
-	}
-
-	s.log.Info("SSL provisioning succeeded", "domain", normalized)
-	writeJSON(w, http.StatusOK, map[string]string{
-		"status": "success",
-		"output": out,
-	})
+	writeJSONError(w, http.StatusGone, sslSetupDeprecatedMsg)
 }
 
 func (s *Server) serverPublicIP(r *http.Request) string {

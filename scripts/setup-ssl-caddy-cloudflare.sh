@@ -4,10 +4,11 @@
 # Issues certs for *.{PUBLIC_DOMAIN} and {PUBLIC_DOMAIN}; proxies api.{domain} → :3100
 # and {domain} → :8081 (dashboard). Supports orange cloud (proxied) DNS records.
 #
-# Usage (non-interactive):
-#   sudo PUBLIC_DOMAIN=example.com CLOUDFLARE_API_TOKEN=... SERVER_IP=203.0.113.10 \
-#     EMAIL=ssl@example.com SKIP_DNS_WAIT=1 ./scripts/setup-ssl-caddy-cloudflare.sh
+# Run on VPS (this is the only supported SSL setup path — not the dashboard UI):
+#   sudo PUBLIC_DOMAIN=example.com CLOUDFLARE_API_TOKEN=your_token SERVER_IP=203.0.113.10 \
+#     EMAIL=ssl@example.com SKIP_DNS_WAIT=1 /opt/trinityproxy/scripts/setup-ssl-caddy-cloudflare.sh
 #
+# From a git checkout on the VPS, use ./scripts/setup-ssl-caddy-cloudflare.sh instead.
 # The API token is stored in /etc/caddy/cloudflare.env (mode 600) for automatic renewal.
 
 set -euo pipefail
@@ -64,6 +65,7 @@ require_env() {
     fi
     if [[ "$missing" -ne 0 ]]; then
         echo ""
+        echo "[!] SSL setup is server-only — configure these env vars and re-run this script on the VPS."
         print_usage
         exit 1
     fi
@@ -321,7 +323,9 @@ main() {
     echo "[*] TrinityProxy Caddy + Cloudflare DNS-01 wildcard SSL setup"
 
     if [[ ${EUID:-0} -ne 0 ]]; then
-        echo "[!] This script must be run as root (use sudo)"
+        echo "[!] This script must be run as root on your VPS (use sudo)"
+        echo "    Example: sudo PUBLIC_DOMAIN=example.com CLOUDFLARE_API_TOKEN=... SERVER_IP=... \\"
+        echo "      EMAIL=ssl@example.com SKIP_DNS_WAIT=1 $0"
         exit 1
     fi
 

@@ -120,43 +120,6 @@ export interface DeploymentConfig {
   has_agent_key: boolean;
 }
 
-export interface DNSRecord {
-  type: string;
-  name: string;
-  value: string;
-  notes?: string;
-}
-
-export interface DNSHints {
-  domain: string;
-  records: DNSRecord[];
-  summary: string;
-}
-
-export interface DevSetup {
-  public_domain: string;
-  suggested_controller_url: string;
-  hosts_file_entry: string;
-  mkcert_instructions: string;
-  controller_note: string;
-}
-
-export interface CloudflareSetupStep {
-  title: string;
-  description: string;
-}
-
-export interface CloudflareSetup {
-  domain: string;
-  api_host: string;
-  server_ip: string;
-  token_url: string;
-  token_steps: CloudflareSetupStep[];
-  dns_records: DNSRecord[];
-  summary: string;
-  renewal_note: string;
-}
-
 async function parseError(res: Response): Promise<string> {
   try {
     const data = (await res.json()) as {
@@ -318,58 +281,3 @@ export function regenerateAgentKey(
   });
 }
 
-export interface DNSHintsQuery {
-  domain?: string;
-  ssl_mode?: SSLMode;
-}
-
-export function fetchDNSHints(
-  token: string | null,
-  query?: DNSHintsQuery,
-): Promise<DNSHints> {
-  const params = new URLSearchParams();
-  if (query?.domain) params.set("domain", query.domain);
-  if (query?.ssl_mode) params.set("ssl_mode", query.ssl_mode);
-  const qs = params.toString();
-  const path = qs
-    ? `/dashboard/deployment/dns-hints?${qs}`
-    : "/dashboard/deployment/dns-hints";
-  return apiFetch(path, token);
-}
-
-export function fetchDevSetup(token: string | null): Promise<DevSetup> {
-  return apiFetch("/dashboard/deployment/dev-setup", token);
-}
-
-export interface CloudflareSetupQuery {
-  domain?: string;
-  ssl_mode?: SSLMode;
-}
-
-export function fetchCloudflareSetup(
-  token: string | null,
-  query?: CloudflareSetupQuery,
-): Promise<CloudflareSetup> {
-  const params = new URLSearchParams();
-  if (query?.domain) params.set("domain", query.domain);
-  if (query?.ssl_mode) params.set("ssl_mode", query.ssl_mode);
-  const qs = params.toString();
-  const path = qs
-    ? `/dashboard/deployment/cloudflare-setup?${qs}`
-    : "/dashboard/deployment/cloudflare-setup";
-  return apiFetch(path, token);
-}
-
-export function provisionSSL(
-  token: string | null,
-  domain: string,
-  cloudflareApiToken: string,
-): Promise<{ status: string; output: string }> {
-  return apiFetch("/dashboard/deployment/provision-ssl", token, {
-    method: "POST",
-    body: JSON.stringify({
-      domain,
-      cloudflare_api_token: cloudflareApiToken,
-    }),
-  });
-}
