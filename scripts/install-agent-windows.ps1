@@ -73,6 +73,47 @@ function Test-NonInteractive {
     return $false
 }
 
+function Assert-RepoScriptLocation {
+    $scriptName = "install-agent-windows.ps1"
+    if ((Split-Path -Leaf $PSScriptRoot) -ne "scripts") {
+        Write-Fail "Run this installer from the TrinityProxy repo (scripts folder missing from path)."
+        Write-Host ""
+        Write-Host "Expected script path: ...\TrinityProxy\scripts\$scriptName"
+        Write-Host "Actual script path:   $PSCommandPath"
+        Write-Host "Current directory:    $(Get-Location)"
+        Write-Host ""
+        Write-Host "From an elevated PowerShell:"
+        Write-Host "  git clone https://github.com/Skillz147/TrinityProxy.git"
+        Write-Host "  cd TrinityProxy"
+        Write-Host "  .\scripts\$scriptName"
+        Write-Host ""
+        Write-Host "Or download only the agent binary and set TRINITY_DOWNLOAD_URL before running a copy of this script."
+        exit 1
+    }
+
+    $repoRoot = Split-Path -Parent $PSScriptRoot
+    $expectedScript = Join-Path $PSScriptRoot $scriptName
+    if (-not (Test-Path -LiteralPath $expectedScript)) {
+        Write-Fail "Could not verify installer path."
+        Write-Host "Expected: $expectedScript"
+        exit 1
+    }
+
+    $looksLikeRepo = (Test-Path -LiteralPath (Join-Path $repoRoot "go.mod")) -or (Test-Path -LiteralPath (Join-Path $repoRoot "README.md"))
+    $hasBinarySource = $env:TRINITY_DOWNLOAD_URL -or $env:TRINITY_LOCAL_BINARY -or (Test-Path -LiteralPath (Join-Path $repoRoot "build\$BinaryName"))
+    if (-not $looksLikeRepo -and -not $hasBinarySource) {
+        Write-Fail "Current folder does not look like the TrinityProxy repo root."
+        Write-Host ""
+        Write-Host "Repo root (parent of scripts): $repoRoot"
+        Write-Host "Current directory:             $(Get-Location)"
+        Write-Host ""
+        Write-Host "cd into the cloned TrinityProxy folder, then run:"
+        Write-Host "  .\scripts\$scriptName"
+        exit 1
+    }
+}
+
+
 function Resolve-SocksPort {
     if (-not $SocksPort) {
         return $DefaultSocksPort
@@ -243,6 +284,8 @@ function Start-AgentBackground([string]$WrapperPath) {
 }
 
 # --- Main ---
+
+Assert-RepoScriptLocation
 
 Write-Host ""
 Write-Host "========================================" -ForegroundColor White

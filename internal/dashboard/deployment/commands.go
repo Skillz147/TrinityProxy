@@ -64,7 +64,7 @@ func BuildDeployCommands(settings *Settings, envFallback, agentKey string) Deplo
 			ControllerURL: productionURL,
 			Command:       windowsCommand(productionURL, agentKey),
 			RunAs:         "Administrator (elevated PowerShell)",
-			Prerequisites: "Build trinityproxy.exe with make build-windows-agent, or set TRINITY_DOWNLOAD_URL.",
+			Prerequisites: "Clone the TrinityProxy repo, cd to repo root, then run the script in elevated PowerShell. Provide build\\trinityproxy.exe (make build-windows-agent) or set TRINITY_DOWNLOAD_URL / TRINITY_LOCAL_BINARY.",
 		},
 		{
 			ID:            "docker",
@@ -136,18 +136,25 @@ CONTROLLER_URL=%q TRINITY_AGENT_KEY=%q ./scripts/install-agent-macos.sh`, contro
 }
 
 func windowsCommand(controllerURL, agentKey string) string {
+	repoClone := `# Clone the repo (skip if you already have it), then use the repo root — not your home folder:
+git clone https://github.com/Skillz147/TrinityProxy.git
+cd TrinityProxy
+
+# Run in elevated PowerShell (Run as administrator).
+# Needs build\trinityproxy.exe under the repo, or set TRINITY_DOWNLOAD_URL / TRINITY_LOCAL_BINARY.`
+
 	if agentKey == "" {
 		return fmt.Sprintf(`# Save Settings first to generate an agent key, then refresh this page.
-# Run in elevated PowerShell from the TrinityProxy repo:
+%s
 $env:TRINITY_NONINTERACTIVE = "1"
 $env:CONTROLLER_URL = %q
-.\\scripts\\install-agent-windows.ps1`, controllerURL)
+.\scripts\install-agent-windows.ps1`, repoClone, controllerURL)
 	}
-	return fmt.Sprintf(`# Run in elevated PowerShell from the TrinityProxy repo:
+	return fmt.Sprintf(`%s
 $env:TRINITY_NONINTERACTIVE = "1"
 $env:CONTROLLER_URL = %q
 $env:TRINITY_AGENT_KEY = %q
-.\\scripts\\install-agent-windows.ps1`, controllerURL, agentKey)
+.\scripts\install-agent-windows.ps1`, repoClone, controllerURL, agentKey)
 }
 
 func dockerDevCommand() string {
