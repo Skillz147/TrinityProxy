@@ -754,8 +754,13 @@ production_print_summary() {
 			echo "  (No IPv4 auto-detected — if the URL is wrong, run: hostname -I)"
 		fi
 		echo ""
-		echo "HTTPS (interactive domain + Cloudflare wildcard SSL):"
-		echo "  sudo ${OPT_SCRIPTS_DIR}/setup-domain.sh"
+		if [[ "\${TRINITY_DOMAIN_SETUP_SKIPPED:-}" == "1" ]]; then
+			echo "HTTPS: skipped during make start — dashboard works on ${dash_url}"
+			echo "  Re-run anytime: sudo make setup-domain"
+		else
+			echo "HTTPS (domain + Cloudflare wildcard SSL):"
+			echo "  sudo make setup-domain  (or during next: sudo make start)"
+		fi
 	fi
 	production_print_dashboard_login_banner
 	echo ""

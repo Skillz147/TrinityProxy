@@ -190,7 +190,7 @@ ensure_command() {
 }
 
 ensure_system_deps() {
-	echo "[1/10] Checking system dependencies (no Dante on controller)..."
+	echo "[1/11] Checking system dependencies (no Dante on controller)..."
 	if command -v apt-get >/dev/null 2>&1; then
 		ensure_system_deps_debian
 		return 0
@@ -226,7 +226,7 @@ ensure_system_deps() {
 }
 
 ensure_go() {
-	echo "[2/10] Checking Go..."
+	echo "[2/11] Checking Go..."
 	export PATH="/usr/local/go/bin:$(production_preserve_path)"
 	if command -v go >/dev/null 2>&1; then
 		echo "[+] Go: $(go version)"
@@ -244,14 +244,14 @@ ensure_go() {
 }
 
 build_all() {
-	echo "[4/10] Building binaries + dashboard UI..."
+	echo "[4/11] Building binaries + dashboard UI..."
 	export PATH="/usr/local/go/bin:$(production_preserve_path)"
 	chmod +x scripts/build-dashboard-ui.sh
 	make build
 }
 
 install_systemd_units() {
-	echo "[6/10] Installing systemd services..."
+	echo "[5/11] Installing systemd services..."
 	export SKIP_BUILD=1 SKIP_START=1
 	chmod +x scripts/install-service.sh scripts/install-dashboard-service.sh
 	run_as_root env SKIP_BUILD=1 SKIP_START=1 bash -c "cd '$ROOT' && bash scripts/install-service.sh"
@@ -267,7 +267,7 @@ echo ""
 ensure_system_deps
 ensure_go
 
-echo "[3/10] Preparing controller environment..."
+echo "[3/11] Preparing controller environment..."
 run_as_root bash -c "
 	set -euo pipefail
 	cd '$ROOT'
@@ -281,7 +281,7 @@ build_all
 
 install_systemd_units
 
-echo "[7/10] Bootstrapping dashboard, syncing keys, and starting services..."
+echo "[6/11] Bootstrapping dashboard, syncing keys, and starting services..."
 run_as_root bash -c "
 	set -euo pipefail
 	cd '$ROOT'
@@ -308,7 +308,7 @@ run_as_root bash -c "
 	true
 "
 
-echo "[8/10] Host firewall (ufw)..."
+echo "[7/11] Host firewall (ufw)..."
 run_as_root bash -c "
 	set -euo pipefail
 	# shellcheck source=scripts/lib/production-common.sh
@@ -316,10 +316,86 @@ run_as_root bash -c "
 	production_configure_ufw_if_active
 "
 
-echo "[9/10] Production port checklist..."
+
+bootstrap_domain_https_step() {
+	local caddy_site="/etc/caddy/trinityproxy.caddy"
+	local setup_script="$ROOT/scripts/setup-domain.sh"
+	local ans domain_rc
+
+	if [[ ! -t 0 ]]; then
+		echo "[*] No interactive TTY — skipping domain + HTTPS (run later: sudo make setup-domain)"
+		export TRINITY_DOMAIN_SETUP_SKIPPED=1
+		return 0
+	fi
+
+	if [[ -f "$caddy_site" ]]; then
+		read -r -p "[?] Domain + HTTPS already configured ($caddy_site). Re-run setup? [y/N/skip]: " ans
+		case "$ans" in
+		y | Y | yes | YES) ;;
+		skip | SKIP | s | S)
+			export TRINITY_DOMAIN_SETUP_SKIPPED=1
+			echo "[*] Keeping existing Caddy config."
+			return 0
+			;;
+		*)
+			echo "[+] Keeping existing Caddy configuration."
+			return 0
+			;;
+		esac
+	else
+		read -r -p "[?] Set up domain + HTTPS now? [Y/n/skip]: " ans
+		case "$ans" in
+		n | N | no | NO | skip | SKIP | s | S)
+			export TRINITY_DOMAIN_SETUP_SKIPPED=1
+			echo "[*] Skipping domain + HTTPS for now."
+			return 0
+			;;
+		'' | y | Y | yes | YES) ;;
+		*)
+			export TRINITY_DOMAIN_SETUP_SKIPPED=1
+			echo "[*] Skipping domain + HTTPS for now."
+			return 0
+			;;
+		esac
+	fi
+
+	chmod +x "$setup_script" "$ROOT/scripts/setup-ssl-caddy-cloudflare.sh" 2>/dev/null || true
+	echo ""
+	if [[ $EUID -eq 0 ]]; then
+		set +e
+		bash "$setup_script" --from-bootstrap
+		domain_rc=$?
+		set -e
+	else
+		set +e
+		$SUDO bash "$setup_script" --from-bootstrap
+		domain_rc=$?
+		set -e
+	fi
+
+	case "$domain_rc" in
+	0)
+		echo "[+] Domain + HTTPS configured."
+		;;
+	2)
+		export TRINITY_DOMAIN_SETUP_SKIPPED=1
+		echo "[*] Continuing without HTTPS (dashboard on :8081)."
+		;;
+	1)
+		echo "[-] Domain setup failed."
+		exit 1
+		;;
+	*)
+		echo "[-] Domain setup exited with unexpected code: ${domain_rc}"
+		exit 1
+		;;
+	esac
+}
+
+echo "[8/11] Production port checklist..."
 chmod +x "$ROOT/scripts/open-production-ports.sh" 2>/dev/null || true
 
-echo "[10/10] Verifying dashboard reachability..."
+echo "[9/11] Verifying dashboard reachability..."
 run_as_root bash -c "
 	set -euo pipefail
 	# shellcheck source=scripts/lib/production-common.sh
@@ -327,7 +403,11 @@ run_as_root bash -c "
 	production_verify_dashboard_reachable || true
 "
 
-run_as_root bash -c "
+
+echo "[10/11] Domain + HTTPS (optional)..."
+bootstrap_domain_https_step
+
+run_as_root env TRINITY_DOMAIN_SETUP_SKIPPED="${TRINITY_DOMAIN_SETUP_SKIPPED:-}" bash -c "
 	set -euo pipefail
 	cd '$ROOT'
 	# shellcheck source=scripts/lib/production-common.sh

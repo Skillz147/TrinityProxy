@@ -28,7 +28,7 @@ make run-agent-dev
 
 | Command | Where | What it does |
 |---------|-------|--------------|
-| **`sudo make start`** | Linux VPS | Installs deps, builds, writes `/etc/trinityproxy/` secrets, starts systemd, **prints admin credentials** |
+| **`sudo make start`** | Linux VPS | Installs deps, builds, secrets, systemd, optional domain/HTTPS step, **prints admin credentials** |
 | **`make start-dev`** | Your laptop | Vite UI `:8080`, dashboard API `:8081`, controller `:3100` |
 
 Stop: `make stop-production` (VPS) · `make stop` (dev)
@@ -47,9 +47,11 @@ sudo make start
 
 `make start` prints admin credentials at the end — save them before closing the terminal.
 
-**GCP/cloud firewall:** allow inbound TCP **8081**, **3100**, **80**, **443**.
+During bootstrap, step **[10/11]** optionally walks through **domain + Cloudflare HTTPS** (DNS checklist, confirm, Caddy). You can skip and keep using the dashboard on **:8081**.
 
-**Domain + SSL (interactive CLI on VPS):** `sudo ./scripts/setup-domain.sh`
+**GCP/cloud firewall:** allow inbound TCP **8081**, **3100**, **80**, **443** (80/443 when using HTTPS).
+
+**Domain + SSL later:** `sudo make setup-domain` or `sudo ./scripts/setup-domain.sh`
 
 After install: log in → change password → **Settings** → **Deploy Agent**.
 

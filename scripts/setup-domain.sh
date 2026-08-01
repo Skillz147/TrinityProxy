@@ -6,9 +6,12 @@
 # Usage:
 #   sudo ./scripts/setup-domain.sh
 #   sudo make setup-domain
+#   sudo ./scripts/setup-domain.sh --from-bootstrap
 #
-# Non-interactive (all required vars set):
+# Non-interactive (all required vars set, or --non-interactive):
 #   sudo PUBLIC_DOMAIN=example.com CLOUDFLARE_API_TOKEN=... SERVER_IP=... SKIP_DNS_WAIT=1 ./scripts/setup-domain.sh
+#
+# Exit codes: 0 success, 1 failure, 2 skipped (no changes / continue without HTTPS)
 
 set -euo pipefail
 
@@ -17,9 +20,57 @@ export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+FROM_BOOTSTRAP=0
+NON_INTERACTIVE=0
+
+err() {
+	echo "[!] $*" >&2
+}
+
+info() {
+	echo "[*] $*"
+}
+
+usage() {
+	cat <<'EOF'
+Usage:
+  sudo ./scripts/setup-domain.sh [--from-bootstrap] [--non-interactive]
+
+Options:
+  --from-bootstrap   Called from make start; user cancel / skip returns exit 2
+  --non-interactive  Require PUBLIC_DOMAIN, CLOUDFLARE_API_TOKEN, SERVER_IP (no prompts)
+
+Exit codes: 0 success, 1 failure, 2 skipped
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+	--from-bootstrap)
+		FROM_BOOTSTRAP=1
+		shift
+		;;
+	--non-interactive)
+		NON_INTERACTIVE=1
+		shift
+		;;
+	-h | --help)
+		usage
+		exit 0
+		;;
+	*)
+		err "Unknown option: $1 (try --help)"
+		exit 1
+		;;
+	esac
+done
+
 source_production_common() {
 	local candidate
-	for candidate in 		"$SCRIPT_DIR/lib/production-common.sh" 		"$ROOT/scripts/lib/production-common.sh" 		"${OPT_SCRIPTS_DIR:-/opt/trinityproxy/scripts}/lib/production-common.sh"; do
+	for candidate in \
+		"$SCRIPT_DIR/lib/production-common.sh" \
+		"$ROOT/scripts/lib/production-common.sh" \
+		"${OPT_SCRIPTS_DIR:-/opt/trinityproxy/scripts}/lib/production-common.sh"; do
 		if [[ -f "$candidate" ]]; then
 			# shellcheck source=scripts/lib/production-common.sh
 			source "$candidate"
@@ -44,13 +95,15 @@ EMAIL="${EMAIL:-}"
 SKIP_DNS_WAIT="${SKIP_DNS_WAIT:-0}"
 SKIP_CONFIRM="${SKIP_CONFIRM:-0}"
 
-err() {
-	echo "[!] $*" >&2
-}
-
-info() {
-	echo "[*] $*"
-}
+if [[ $NON_INTERACTIVE -eq 1 ]] || {
+	[[ -n "$PUBLIC_DOMAIN" ]] && [[ -n "$CLOUDFLARE_API_TOKEN" ]] && [[ -n "$SERVER_IP" ]]
+}; then
+	NON_INTERACTIVE=1
+	SKIP_CONFIRM="${SKIP_CONFIRM:-1}"
+	if [[ "$SKIP_DNS_WAIT" != "1" ]]; then
+		SKIP_DNS_WAIT=1
+	fi
+fi
 
 section() {
 	echo ""
@@ -58,6 +111,12 @@ section() {
 	echo " $*"
 	echo "================================================================="
 	echo ""
+}
+
+exit_skipped() {
+	local msg="${1:-Skipped — no changes made.}"
+	info "$msg"
+	exit 2
 }
 
 require_root() {
@@ -240,10 +299,43 @@ EOF
 	case "$ans" in
 	y | Y | yes | YES) return 0 ;;
 	*)
-		info "Cancelled — no changes made."
-		exit 0
+		exit_skipped "Cancelled — no changes made."
 		;;
 	esac
+}
+
+handle_ssl_failure() {
+	local ssl_rc="$1"
+	err "SSL / Caddy provisioning failed (exit ${ssl_rc})."
+	echo ""
+	echo "[!] Caddy journal (last 20 lines):"
+	if type production_journalctl >/dev/null 2>&1; then
+		production_journalctl -u caddy -n 20 --no-pager 2>/dev/null || true
+	elif command -v journalctl >/dev/null 2>&1; then
+		journalctl -u caddy -n 20 --no-pager 2>/dev/null || true
+	else
+		echo "    Check: sudo journalctl -u caddy -n 20 --no-pager"
+	fi
+	echo ""
+	echo "    Re-run later: sudo ${OPT_SCRIPTS_DIR:-/opt/trinityproxy/scripts}/setup-domain.sh"
+	echo "                  or: sudo ./scripts/setup-domain.sh"
+	echo ""
+
+	if [[ $FROM_BOOTSTRAP -eq 1 ]] && [[ -t 0 ]]; then
+		local ans=""
+		read -r -p "[?] Continue bootstrap without HTTPS? (dashboard stays on :8081) [Y/n]: " ans
+		case "$ans" in
+		n | N | no | NO)
+			err "Bootstrap stopped — fix SSL or skip domain setup and re-run make start."
+			exit 1
+			;;
+		*)
+			exit_skipped "Continuing without HTTPS."
+			;;
+		esac
+	fi
+
+	exit 1
 }
 
 run_ssl_engine() {
@@ -255,12 +347,17 @@ run_ssl_engine() {
 	chmod +x "$SSL_SCRIPT" 2>/dev/null || true
 
 	export PUBLIC_DOMAIN CLOUDFLARE_API_TOKEN SERVER_IP EMAIL
-	# Wrapper already confirmed DNS; engine still prints its checklist for reference.
 	export SKIP_DNS_WAIT=1
 
 	info "Running SSL provisioning engine..."
 	echo ""
+	set +e
 	bash "$SSL_SCRIPT"
+	local ssl_rc=$?
+	set -e
+	if [[ $ssl_rc -ne 0 ]]; then
+		handle_ssl_failure "$ssl_rc"
+	fi
 }
 
 main() {
@@ -276,28 +373,46 @@ main() {
 		err "Could not detect a public IPv4 address automatically."
 		echo "    Enter your VPS public IPv4 when prompted."
 	fi
-	if [[ -t 0 ]]; then
-		while ! prompt_server_ip; do
-			echo "    Try again or export SERVER_IP=... before running."
-		done
-	else
+
+	if [[ $NON_INTERACTIVE -eq 1 ]]; then
 		if [[ -z "$SERVER_IP" ]] || ! production_is_ipv4 "$SERVER_IP"; then
-			err "SERVER_IP is required when stdin is not a TTY."
+			err "SERVER_IP is required for non-interactive mode."
 			exit 1
 		fi
-	fi
-
-	if [[ -t 0 ]]; then
-		while ! prompt_domain; do
-			:
-		done
-	else
 		if [[ -z "$PUBLIC_DOMAIN" ]]; then
-			err "PUBLIC_DOMAIN is required when stdin is not a TTY."
+			err "PUBLIC_DOMAIN is required for non-interactive mode."
 			exit 1
 		fi
 		PUBLIC_DOMAIN="$(normalize_domain "$PUBLIC_DOMAIN")"
-		validate_domain "$PUBLIC_DOMAIN"
+		validate_domain "$PUBLIC_DOMAIN" || exit 1
+		if [[ -z "$CLOUDFLARE_API_TOKEN" ]]; then
+			err "CLOUDFLARE_API_TOKEN is required for non-interactive mode."
+			exit 1
+		fi
+	else
+		if [[ -t 0 ]]; then
+			while ! prompt_server_ip; do
+				echo "    Try again or export SERVER_IP=... before running."
+			done
+		else
+			if [[ -z "$SERVER_IP" ]] || ! production_is_ipv4 "$SERVER_IP"; then
+				err "SERVER_IP is required when stdin is not a TTY."
+				exit 1
+			fi
+		fi
+
+		if [[ -t 0 ]]; then
+			while ! prompt_domain; do
+				:
+			done
+		else
+			if [[ -z "$PUBLIC_DOMAIN" ]]; then
+				err "PUBLIC_DOMAIN is required when stdin is not a TTY."
+				exit 1
+			fi
+			PUBLIC_DOMAIN="$(normalize_domain "$PUBLIC_DOMAIN")"
+			validate_domain "$PUBLIC_DOMAIN"
+		fi
 	fi
 
 	EMAIL="${EMAIL:-ssl@${PUBLIC_DOMAIN}}"
@@ -314,4 +429,4 @@ main() {
 	info "Done. Set agents: CONTROLLER_URL=https://api.${PUBLIC_DOMAIN}"
 }
 
-main "$@"
+main
