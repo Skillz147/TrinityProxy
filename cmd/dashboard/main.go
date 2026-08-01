@@ -55,7 +55,7 @@ func main() {
 		}
 
 		if bootstrap.Created {
-			printBootstrapCredentials(cfg.DashboardURL, bootstrap.Username, bootstrap.TempPassword, os.Getenv("DASHBOARD_ADMIN_CREDS_FILE"))
+			printBootstrapCredentials(cfg.DashboardURL, bootstrap.Username, bootstrap.TempPassword, os.Getenv("TRINITY_BOOTSTRAP_DEFER_PRINT") == "1")
 		} else {
 			fmt.Println("Dashboard admin already exists; no credentials generated.")
 		}
@@ -207,7 +207,15 @@ func registerStaticUI(mux *http.ServeMux, staticDir string, log *slog.Logger) {
 	log.Info("serving built dashboard UI", "dir", absDir)
 }
 
-func printBootstrapCredentials(dashboardURL, username, tempPassword, credsFile string) {
+func printBootstrapCredentials(dashboardURL, username, tempPassword string, deferPrint bool) {
+	if deferPrint {
+		fmt.Printf("TRINITY_BOOTSTRAP_CREATED=1\n")
+		fmt.Printf("TRINITY_BOOTSTRAP_URL=%s\n", dashboardURL)
+		fmt.Printf("TRINITY_BOOTSTRAP_USERNAME=%s\n", username)
+		fmt.Printf("TRINITY_BOOTSTRAP_PASSWORD=%s\n", tempPassword)
+		return
+	}
+
 	sep := strings.Repeat("=", 60)
 	lines := []string{
 		"",
@@ -224,13 +232,6 @@ func printBootstrapCredentials(dashboardURL, username, tempPassword, credsFile s
 	}
 	for _, line := range lines {
 		fmt.Println(line)
-	}
-
-	if credsFile != "" {
-		body := strings.Join(lines, "\n")
-		if err := os.WriteFile(credsFile, []byte(body), 0o600); err != nil {
-			slog.Default().Error("failed to write dashboard admin credentials file", "err", err, "path", credsFile)
-		}
 	}
 
 	slog.Default().Info("dashboard admin bootstrapped",

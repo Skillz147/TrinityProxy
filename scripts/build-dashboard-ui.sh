@@ -11,6 +11,39 @@ cd "$ROOT"
 SRC_DIST="$ROOT/web/dashboard/dist"
 EMBED_DIST="$ROOT/cmd/dashboard/dist"
 
+embed_tree_valid() {
+	[[ -f "$EMBED_DIST/index.html" ]]
+}
+
+src_tree_valid() {
+	[[ -f "$SRC_DIST/index.html" ]]
+}
+
+embed_matches_src() {
+	src_tree_valid && embed_tree_valid && cmp -s "$SRC_DIST/index.html" "$EMBED_DIST/index.html"
+}
+
+sync_dist_to_embed() {
+	if embed_matches_src; then
+		echo "[+] Embed UI already up to date at $EMBED_DIST"
+		return 0
+	fi
+
+	if ! src_tree_valid; then
+		echo "[-] Missing $SRC_DIST/index.html"
+		exit 1
+	fi
+
+	mkdir -p "$EMBED_DIST"
+	if command -v rsync >/dev/null 2>&1; then
+		rsync -a --delete "$SRC_DIST/" "$EMBED_DIST/"
+	else
+		rm -rf "${EMBED_DIST:?}"/*
+		cp -a "$SRC_DIST"/. "$EMBED_DIST/"
+	fi
+	echo "[+] Synced UI assets to $EMBED_DIST (go:embed in cmd/dashboard)"
+}
+
 build_with_npm() {
 	if [[ ! -d "$ROOT/web/dashboard/node_modules" ]]; then
 		echo "[*] Installing dashboard UI dependencies..."
@@ -22,9 +55,9 @@ build_with_npm() {
 
 if command -v npm >/dev/null 2>&1; then
 	build_with_npm
-elif [[ -f "$SRC_DIST/index.html" ]]; then
+elif src_tree_valid; then
 	echo "[+] npm not found — using existing $SRC_DIST"
-elif [[ -f "$EMBED_DIST/index.html" ]]; then
+elif embed_tree_valid; then
 	echo "[+] npm not found — reusing embedded UI tree at $EMBED_DIST"
 	exit 0
 else
@@ -33,11 +66,4 @@ else
 	exit 1
 fi
 
-if [[ ! -f "$SRC_DIST/index.html" ]]; then
-	echo "[-] Missing $SRC_DIST/index.html after build"
-	exit 1
-fi
-
-mkdir -p "$EMBED_DIST"
-rsync -a --delete "$SRC_DIST/" "$EMBED_DIST/"
-echo "[+] Synced UI assets to $EMBED_DIST (go:embed in cmd/dashboard)"
+sync_dist_to_embed

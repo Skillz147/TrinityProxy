@@ -137,14 +137,6 @@ install_systemd_units() {
 	run_as_root env SKIP_BUILD=1 SKIP_START=1 bash scripts/install-dashboard-service.sh
 }
 
-start_services() {
-	echo "[9/10] Starting services..."
-	run_as_root systemctl daemon-reload
-	run_as_root systemctl enable trinityproxy-controller trinityproxy-dashboard
-	run_as_root systemctl restart trinityproxy-controller
-	run_as_root systemctl restart trinityproxy-dashboard
-	sleep 2
-}
 
 echo "============================================"
 echo "  TrinityProxy production bootstrap"
@@ -169,7 +161,7 @@ build_all
 
 install_systemd_units
 
-echo "[7/10] Bootstrapping dashboard admin..."
+echo "[7/10] Bootstrapping dashboard, syncing keys, and starting services..."
 run_as_root bash -c "
 	set -euo pipefail
 	cd '$ROOT'
@@ -177,32 +169,16 @@ run_as_root bash -c "
 	# shellcheck source=scripts/lib/production-common.sh
 	source '$ROOT/scripts/lib/production-common.sh'
 	production_init_dashboard_admin
-"
-
-echo "[8/10] Syncing agent key to controller.env..."
-run_as_root bash -c "
-	set -euo pipefail
-	cd '$ROOT'
-	# shellcheck source=scripts/lib/production-common.sh
-	source '$ROOT/scripts/lib/production-common.sh'
 	production_sync_agent_key_to_controller_env
+	systemctl daemon-reload
+	systemctl enable trinityproxy-controller trinityproxy-dashboard
+	systemctl restart trinityproxy-controller
+	systemctl restart trinityproxy-dashboard
+	sleep 2
+	if ! systemctl is-active trinityproxy-controller >/dev/null 2>&1 || ! systemctl is-active trinityproxy-dashboard >/dev/null 2>&1; then
+		echo '[!] One or more services failed to start:'
+		systemctl status trinityproxy-controller trinityproxy-dashboard --no-pager || true
+		exit 1
+	fi
+	production_print_summary
 "
-
-start_services
-
-echo "[10/10] Verifying services..."
-CTRL_OK=0
-DASH_OK=0
-if run_as_root systemctl is-active trinityproxy-controller >/dev/null 2>&1; then
-	CTRL_OK=1
-fi
-if run_as_root systemctl is-active trinityproxy-dashboard >/dev/null 2>&1; then
-	DASH_OK=1
-fi
-if [[ $CTRL_OK -eq 0 ]] || [[ $DASH_OK -eq 0 ]]; then
-	echo "[!] One or more services failed to start:"
-	run_as_root systemctl status trinityproxy-controller trinityproxy-dashboard --no-pager || true
-	exit 1
-fi
-
-production_print_summary

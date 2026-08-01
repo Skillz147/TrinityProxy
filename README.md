@@ -30,7 +30,7 @@ sudo make start
 Runs `scripts/setup.sh` (Go, build tools; Dante optional on controller-only hosts) then `scripts/install-production.sh`:
 
 - Builds binaries (UI embedded — no Node.js on VPS)
-- Writes secrets to `/etc/trinityproxy/controller.env` and admin creds to `dashboard-admin.txt`
+- Writes secrets to `/etc/trinityproxy/controller.env`
 - Starts `trinityproxy-controller` (`:3100`) and `trinityproxy-dashboard` (`:8081`)
 
 **Then:** log in → **Settings** (domain) → **Cloudflare SSL** → **Deploy Agent**

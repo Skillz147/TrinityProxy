@@ -3,7 +3,6 @@
 
 TRINITY_DIR="${TRINITY_DIR:-/etc/trinityproxy}"
 CONTROLLER_ENV="${CONTROLLER_ENV:-$TRINITY_DIR/controller.env}"
-ADMIN_CREDS="${ADMIN_CREDS:-$TRINITY_DIR/dashboard-admin.txt}"
 STATE_DIR="${STATE_DIR:-/var/lib/trinityproxy}"
 DASHBOARD_USER="${DASHBOARD_USER:-trinityproxy}"
 API_PORT="${API_PORT:-3100}"
@@ -137,22 +136,53 @@ production_init_dashboard_admin() {
 	export DASHBOARD_DB_PATH="$STATE_DIR/dashboard.db"
 	export DB_PATH="$DB_PATH"
 	export DASHBOARD_URL="$dashboard_url"
-	export DASHBOARD_ADMIN_CREDS_FILE="$ADMIN_CREDS"
+	export TRINITY_BOOTSTRAP_DEFER_PRINT=1
 
-	./build/trinityproxy-dashboard --init-only
+	PRODUCTION_DASHBOARD_ADMIN_CREATED=""
+	PRODUCTION_DASHBOARD_URL=""
+	PRODUCTION_DASHBOARD_USERNAME=""
+	PRODUCTION_DASHBOARD_PASSWORD=""
+
+	while IFS= read -r line; do
+		case "$line" in
+		TRINITY_BOOTSTRAP_CREATED=*) PRODUCTION_DASHBOARD_ADMIN_CREATED="${line#TRINITY_BOOTSTRAP_CREATED=}" ;;
+		TRINITY_BOOTSTRAP_URL=*) PRODUCTION_DASHBOARD_URL="${line#TRINITY_BOOTSTRAP_URL=}" ;;
+		TRINITY_BOOTSTRAP_USERNAME=*) PRODUCTION_DASHBOARD_USERNAME="${line#TRINITY_BOOTSTRAP_USERNAME=}" ;;
+		TRINITY_BOOTSTRAP_PASSWORD=*) PRODUCTION_DASHBOARD_PASSWORD="${line#TRINITY_BOOTSTRAP_PASSWORD=}" ;;
+		esac
+	done < <(./build/trinityproxy-dashboard --init-only)
 
 	if [[ -f "$STATE_DIR/dashboard.db" ]]; then
 		chown "$DASHBOARD_USER:$DASHBOARD_USER" "$STATE_DIR/dashboard.db"
 		chmod 640 "$STATE_DIR/dashboard.db"
-	fi
-	if [[ -f "$ADMIN_CREDS" ]]; then
-		chmod 600 "$ADMIN_CREDS"
 	fi
 }
 
 production_caddy_active() {
 	[[ -f /etc/caddy/trinityproxy.caddy ]] && command -v caddy >/dev/null 2>&1
 }
+
+production_print_dashboard_login_banner() {
+	local sep="============================================================"
+	echo ""
+	echo "$sep"
+	echo "  DASHBOARD LOGIN — save these credentials"
+	echo "$sep"
+	if [[ "${PRODUCTION_DASHBOARD_ADMIN_CREATED:-}" == "1" ]]; then
+		echo ""
+		echo "  Dashboard URL:  ${PRODUCTION_DASHBOARD_URL}"
+		echo "  Username:       ${PRODUCTION_DASHBOARD_USERNAME}"
+		echo "  Password:       ${PRODUCTION_DASHBOARD_PASSWORD}"
+		echo ""
+		echo "  First login requires a password change."
+	else
+		echo ""
+		echo "  Dashboard admin already exists — no new password was generated."
+		echo "  Use your existing password or reset the dashboard database."
+	fi
+	echo "$sep"
+}
+
 
 production_print_summary() {
 	local ip
@@ -181,19 +211,10 @@ production_print_summary() {
 		echo "HTTPS: Settings → Cloudflare SSL in dashboard, or:"
 		echo "  sudo ./scripts/setup-ssl-caddy-cloudflare.sh"
 	fi
+	production_print_dashboard_login_banner
 	echo ""
-	echo "Credentials:"
-	echo "  Controller env:  $CONTROLLER_ENV"
-	echo "    TRINITY_API_KEY, TRINITY_AGENT_KEY, API_PORT, DB_PATH, CONTROLLER_URL"
-	if [[ -f "$ADMIN_CREDS" ]]; then
-		echo "  Dashboard login: $ADMIN_CREDS"
-		echo ""
-		echo "--- Dashboard login (save these credentials) ---"
-		cat "$ADMIN_CREDS"
-		echo "--- end dashboard login ---"
-	else
-		echo "  Dashboard login: admin already exists (see $ADMIN_CREDS or reset DB)"
-	fi
+	echo "Controller secrets file: $CONTROLLER_ENV"
+	echo "  (TRINITY_API_KEY, TRINITY_AGENT_KEY, API_PORT, DB_PATH, CONTROLLER_URL)"
 	echo ""
 	echo "Service commands:"
 	echo "  sudo systemctl status trinityproxy-controller trinityproxy-dashboard"
