@@ -13,6 +13,7 @@
     TRINITY_AGENT_KEY=your-shared-secret
 
   Optional:
+    TRINITY_LOG_LEVEL=info                Install verbosity: quiet | silent | info | debug (default: info)
     TRINITY_SOCKS_PORT=10855              Explicit SOCKS port (default: auto-pick free port in 10800-10999)
     TRINITY_SOCKS_USER / TRINITY_SOCKS_PASSWORD  Override auto-generated SOCKS credentials
     TRINITY_LOCAL_BINARY=C:\path\to\trinityproxy.exe   Use a pre-built binary
@@ -37,6 +38,7 @@ param(
     [string]$LocalBinary = $env:TRINITY_LOCAL_BINARY,
     [string]$DownloadUrl = $env:TRINITY_DOWNLOAD_URL,
     [string]$InstallDir = $(if ($env:TRINITY_INSTALL_DIR) { $env:TRINITY_INSTALL_DIR } else { Join-Path ${env:ProgramFiles} "TrinityProxy" }),
+    [string]$LogLevel = $env:TRINITY_LOG_LEVEL,
     [switch]$UseScheduledTask
 )
 
@@ -56,22 +58,108 @@ $DefaultSocksPortEnd = 10999
 $ScriptVersion = "4"
 $DefaultReleaseBinaryUrl = "https://github.com/Skillz147/TrinityProxy/releases/download/latest/trinityproxy-windows-amd64.exe"
 
+function Resolve-LogLevel([string]$Raw) {
+    if (-not $Raw -or -not $Raw.Trim()) { return "info" }
+    switch ($Raw.Trim().ToLower()) {
+        { $_ -in @("quiet", "total-silent", "totalsilent") } { return "quiet" }
+        "silent" { return "silent" }
+        "debug" { return "debug" }
+        "info" { return "info" }
+        default {
+            Write-Host "   ERROR: Invalid TRINITY_LOG_LEVEL '$Raw' (use: quiet, silent, info, debug)" -ForegroundColor Red
+            exit 1
+        }
+    }
+}
+
+$script:LogLevel = Resolve-LogLevel -Raw $LogLevel
+
+function Test-LogAtLeast([string]$MinLevel) {
+    $order = @{ quiet = 0; silent = 1; info = 2; debug = 3 }
+    return $order[$script:LogLevel] -ge $order[$MinLevel]
+}
+
+function Write-Debug([string]$Message) {
+    if ($script:LogLevel -eq "debug") {
+        Write-Host "   DEBUG: $Message" -ForegroundColor DarkGray
+    }
+}
 
 function Write-Step([string]$Message) {
+    if (-not (Test-LogAtLeast "info")) { return }
     Write-Host ""
     Write-Host ">> $Message" -ForegroundColor Cyan
 }
 
 function Write-Ok([string]$Message) {
+    if (-not (Test-LogAtLeast "info")) { return }
     Write-Host "   OK: $Message" -ForegroundColor Green
 }
 
 function Write-Warn([string]$Message) {
+    if ($script:LogLevel -eq "quiet") { return }
     Write-Host "   Note: $Message" -ForegroundColor Yellow
 }
 
 function Write-Fail([string]$Message) {
     Write-Host "   ERROR: $Message" -ForegroundColor Red
+}
+
+function Write-InstallStart {
+    if ($script:LogLevel -eq "quiet") { return }
+    if ($script:LogLevel -eq "silent") {
+        Write-Host "TrinityProxy: Windows agent install started"
+        return
+    }
+    Write-Host ""
+    Write-Host "========================================" -ForegroundColor White
+    Write-Host "  TrinityProxy — Windows Agent Setup" -ForegroundColor White
+    Write-Host "========================================" -ForegroundColor White
+}
+
+function Write-InstallComplete([hashtable]$Summary) {
+    if ($script:LogLevel -eq "quiet") { return }
+    if ($script:LogLevel -eq "silent") {
+        Write-Host "TrinityProxy: setup complete (controller: $($Summary.ControllerUrl), SOCKS port $($Summary.Port))"
+        return
+    }
+    Write-Host ""
+    Write-Host "========================================" -ForegroundColor Green
+    Write-Host "  Setup complete!" -ForegroundColor Green
+    Write-Host "========================================" -ForegroundColor Green
+    Write-Host ""
+    Write-Host "Your Windows PC is now reporting to:"
+    Write-Host "  $($Summary.ControllerUrl)"
+    Write-Host ""
+    Write-Host "Embedded SOCKS5 proxy listens on TCP port $($Summary.Port)."
+    Write-Host "SOCKS credentials (also saved in install folder):"
+    Write-Host "  Username: $($Summary.User)"
+    Write-Host "  Password: $($Summary.Pass)"
+    Write-Host "  Files:    $($Summary.InstallDir)\trinityproxy-username"
+    Write-Host "            $($Summary.InstallDir)\trinityproxy-password"
+    Write-Host "            $($Summary.InstallDir)\trinityproxy-port"
+    Write-Host ""
+    Write-Host "The agent runs in the background and starts automatically when Windows boots."
+    Write-Host "Open your TrinityProxy dashboard Agents page — the node should appear within about a minute."
+    Write-Host ""
+    Write-Host "Useful commands (run PowerShell as Administrator):"
+    if (-not $Summary.UseScheduledTask -and (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue)) {
+        Write-Host "  Check status:  Get-Service $ServiceName"
+        Write-Host "  View in Services: services.msc  (look for '$ServiceDisplayName')"
+        Write-Host "  Stop agent:      Stop-Service $ServiceName"
+        Write-Host "  Start agent:     Start-Service $ServiceName"
+        Write-Host "  Remove agent:    sc.exe delete $ServiceName"
+    }
+    else {
+        Write-Host "  Check task:      Get-ScheduledTask -TaskName $ServiceName"
+        Write-Host "  Stop agent:      Stop-ScheduledTask -TaskName $ServiceName"
+        Write-Host "  Start agent:     Start-ScheduledTask -TaskName $ServiceName"
+        Write-Host "  Remove agent:    Unregister-ScheduledTask -TaskName $ServiceName -Confirm:`$false"
+    }
+    Write-Host ""
+    Write-Host "Test SOCKS locally:"
+    Write-Host "  curl --proxy socks5://$($Summary.User):$($Summary.Pass)@127.0.0.1:$($Summary.Port) https://api.ipify.org"
+    Write-Host ""
 }
 
 function Test-Admin {
@@ -82,6 +170,7 @@ function Test-Admin {
 
 function Test-NonInteractive {
     if ($env:TRINITY_NONINTERACTIVE -eq "1") { return $true }
+    if ($script:LogLevel -eq "quiet") { return $true }
     return $false
 }
 
@@ -162,7 +251,10 @@ function Invoke-BootstrapRepoAndReenter {
         if (Test-Path -LiteralPath $zipFile) {
             Remove-Item -LiteralPath $zipFile -Force -ErrorAction SilentlyContinue
         }
-        Write-Host "   Downloading: $zipURL"
+        Write-Debug "Downloading source archive: $zipURL"
+        if (Test-LogAtLeast "info") {
+            Write-Host "   Downloading: $zipURL"
+        }
         Invoke-WebRequest -Uri $zipURL -OutFile $zipFile -UseBasicParsing
         if (-not (Test-Path -LiteralPath $zipFile)) {
             Write-Fail "Download failed — archive not found."
@@ -196,8 +288,9 @@ function Invoke-BootstrapRepoAndReenter {
         exit 1
     }
 
-    Write-Ok "Running installer from $cloneDir"
-    # Re-enter via environment only — never splat script parameters.
+    Write-Debug "Re-entering installer at $installer (log level: $script:LogLevel)"
+    if ($env:TRINITY_LOG_LEVEL) { $env:TRINITY_LOG_LEVEL = $env:TRINITY_LOG_LEVEL.Trim() }
+    elseif ($script:LogLevel) { $env:TRINITY_LOG_LEVEL = $script:LogLevel }
     if ($env:CONTROLLER_URL) { $env:CONTROLLER_URL = $env:CONTROLLER_URL.Trim() }
     if ($env:TRINITY_AGENT_KEY) { $env:TRINITY_AGENT_KEY = $env:TRINITY_AGENT_KEY.Trim() }
     if ($env:TRINITY_SOCKS_PORT) {
@@ -212,6 +305,10 @@ function Invoke-BootstrapRepoAndReenter {
     if ($env:TRINITY_INSTALL_DIR) { $env:TRINITY_INSTALL_DIR = $env:TRINITY_INSTALL_DIR.Trim() }
     if ($env:TRINITY_USE_SCHEDULED_TASK -eq "1") { $env:TRINITY_USE_SCHEDULED_TASK = "1" }
 
+    if (Test-LogAtLeast "info") {
+        Write-Ok "Running installer from $cloneDir"
+    }
+    # Re-enter via environment only — never splat script parameters.
     & $installer
     exit $LASTEXITCODE
 }
@@ -399,12 +496,14 @@ function Resolve-SourceBinary {
     param([switch]$DownloadOnly)
 
     if ($LocalBinary -and (Test-Path -LiteralPath $LocalBinary)) {
+        Write-Debug "TRINITY_LOCAL_BINARY=$LocalBinary"
         Write-Ok "Using binary from TRINITY_LOCAL_BINARY"
         return (Resolve-Path -LiteralPath $LocalBinary).Path
     }
 
     $repoBinary = Join-Path (Split-Path -Parent $PSScriptRoot) "build\$BinaryName"
     if (Test-Path -LiteralPath $repoBinary) {
+        Write-Debug "Using repo binary at $repoBinary"
         Write-Ok "Using local build: build\$BinaryName"
         return (Resolve-Path -LiteralPath $repoBinary).Path
     }
@@ -422,7 +521,11 @@ function Resolve-SourceBinary {
     if ($DownloadUrl) {
         $tempFile = Join-Path $env:TEMP "trinityproxy-download.exe"
         Write-Step "Downloading TrinityProxy agent..."
-        Write-Host "   From: $DownloadUrl"
+        Write-Debug "TRINITY_DOWNLOAD_URL=$DownloadUrl"
+        Write-Debug "Saving to $tempFile"
+        if (Test-LogAtLeast "info") {
+            Write-Host "   From: $DownloadUrl"
+        }
         Invoke-WebRequest -Uri $DownloadUrl -OutFile $tempFile -UseBasicParsing
         if (-not (Test-Path -LiteralPath $tempFile)) {
             throw "Download failed — file not found after download."
@@ -455,13 +558,16 @@ Options:
 
 function Ensure-FirewallRule([int]$Port) {
     $ruleName = "TrinityProxy SOCKS5 (TCP $Port)"
+    Write-Debug "Checking firewall rule: $ruleName"
     $existing = Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue
     if ($existing) {
+        Write-Debug "Existing firewall rule found (Enabled=$($existing.Enabled))"
         Write-Ok "Firewall rule already exists: $ruleName"
         return
     }
 
     Write-Step "Opening Windows Firewall for SOCKS port $Port..."
+    Write-Debug "New-NetFirewallRule -DisplayName '$ruleName' -Direction Inbound -Protocol TCP -LocalPort $Port -Action Allow -Profile Any"
     New-NetFirewallRule `
         -DisplayName $ruleName `
         -Direction Inbound `
@@ -513,6 +619,7 @@ function Install-WindowsService([string]$WrapperPath) {
 
     Write-Step "Registering Windows service..."
     $binArg = "`"$WrapperPath`""
+    Write-Debug "sc.exe create $ServiceName binPath= $binArg start= auto DisplayName= $ServiceDisplayName"
     & sc.exe create $ServiceName binPath= $binArg start= auto DisplayName= $ServiceDisplayName | Out-Null
     if ($LASTEXITCODE -ne 0) {
         throw "sc.exe create failed (exit $LASTEXITCODE). Try running this script as Administrator."
@@ -541,6 +648,26 @@ function Install-ScheduledTaskFallback([string]$WrapperPath) {
     Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($triggerBoot, $triggerLogon) -Settings $settings -Principal $principal -Description "TrinityProxy agent — embedded SOCKS5 proxy and controller heartbeats" | Out-Null
     Start-ScheduledTask -TaskName $taskName
     Write-Ok "Scheduled task registered and started: $taskName"
+}
+
+function Install-UninstallSupport([string]$TargetDir) {
+    $uninstallName = "uninstall-agent-windows.ps1"
+    $source = Join-Path $PSScriptRoot $uninstallName
+    $dest = Join-Path $TargetDir $uninstallName
+    if (Test-Path -LiteralPath $source) {
+        Copy-Item -LiteralPath $source -Destination $dest -Force
+    }
+
+    $uninstallCmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$dest`""
+    $key = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\TrinityProxyAgent"
+    New-Item -Path $key -Force | Out-Null
+    Set-ItemProperty -Path $key -Name DisplayName -Value $ServiceDisplayName
+    Set-ItemProperty -Path $key -Name Publisher -Value "TrinityProxy"
+    Set-ItemProperty -Path $key -Name InstallLocation -Value $TargetDir
+    Set-ItemProperty -Path $key -Name UninstallString -Value $uninstallCmd
+    Set-ItemProperty -Path $key -Name QuietUninstallString -Value $uninstallCmd
+    Set-ItemProperty -Path $key -Name NoModify -Value 1 -Type DWord
+    Set-ItemProperty -Path $key -Name NoRepair -Value 1 -Type DWord
 }
 
 function Start-AgentBackground([string]$WrapperPath) {
@@ -602,10 +729,7 @@ function Invoke-AgentInstallCore {
         [string]$SourceBinary
     )
 
-    Write-Host ""
-    Write-Host "========================================" -ForegroundColor White
-    Write-Host "  TrinityProxy — Windows Agent Setup" -ForegroundColor White
-    Write-Host "========================================" -ForegroundColor White
+    Write-InstallStart
 
     if (-not (Test-Admin)) {
         Write-Fail "This installer must run as Administrator."
@@ -615,7 +739,10 @@ function Invoke-AgentInstallCore {
     }
 
     $nonInteractive = Test-NonInteractive
+    Write-Debug "Log level=$script:LogLevel nonInteractive=$nonInteractive installDir=$InstallDir"
+    Write-Debug "CONTROLLER_URL=$ControllerUrl TRINITY_SOCKS_PORT env=$($env:TRINITY_SOCKS_PORT)"
     $script:socksPort = Resolve-SocksPort -TargetDir $InstallDir
+    Write-Debug "Resolved SOCKS port=$socksPort"
 
     if (-not $ControllerUrl) {
         if ($nonInteractive) {
@@ -661,45 +788,19 @@ function Invoke-AgentInstallCore {
     $wrapperPath = Write-WrapperScript -TargetDir $InstallDir -Port $socksPort -SocksUser $creds.User -SocksPass $creds.Pass
     Write-Ok "Launcher script ready (TRINITY_SKIP_INSTALLER=1, TRINITY_SOCKS_PORT=$socksPort)"
 
+    Install-UninstallSupport -TargetDir $InstallDir
+    Write-Ok "Registered uninstall entry in Windows Apps & features"
+
     Start-AgentBackground -WrapperPath $wrapperPath
 
-    Write-Host ""
-    Write-Host "========================================" -ForegroundColor Green
-    Write-Host "  Setup complete!" -ForegroundColor Green
-    Write-Host "========================================" -ForegroundColor Green
-    Write-Host ""
-    Write-Host "Your Windows PC is now reporting to:"
-    Write-Host "  $ControllerUrl"
-    Write-Host ""
-    Write-Host "Embedded SOCKS5 proxy listens on TCP port $socksPort."
-    Write-Host "SOCKS credentials (also saved in install folder):"
-    Write-Host "  Username: $($creds.User)"
-    Write-Host "  Password: $($creds.Pass)"
-    Write-Host "  Files:    $InstallDir\trinityproxy-username"
-    Write-Host "            $InstallDir\trinityproxy-password"
-    Write-Host "            $InstallDir\trinityproxy-port"
-    Write-Host ""
-    Write-Host "The agent runs in the background and starts automatically when Windows boots."
-    Write-Host "Open your TrinityProxy dashboard Agents page — the node should appear within about a minute."
-    Write-Host ""
-    Write-Host "Useful commands (run PowerShell as Administrator):"
-    if (-not $UseScheduledTask -and (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue)) {
-        Write-Host "  Check status:  Get-Service $ServiceName"
-        Write-Host "  View in Services: services.msc  (look for '$ServiceDisplayName')"
-        Write-Host "  Stop agent:      Stop-Service $ServiceName"
-        Write-Host "  Start agent:     Start-Service $ServiceName"
-        Write-Host "  Remove agent:    sc.exe delete $ServiceName"
+    Write-InstallComplete @{
+        ControllerUrl     = $ControllerUrl
+        Port              = $socksPort
+        User              = $creds.User
+        Pass              = $creds.Pass
+        InstallDir        = $InstallDir
+        UseScheduledTask  = [bool]$UseScheduledTask
     }
-    else {
-        Write-Host "  Check task:      Get-ScheduledTask -TaskName $ServiceName"
-        Write-Host "  Stop agent:      Stop-ScheduledTask -TaskName $ServiceName"
-        Write-Host "  Start agent:     Start-ScheduledTask -TaskName $ServiceName"
-        Write-Host "  Remove agent:    Unregister-ScheduledTask -TaskName $ServiceName -Confirm:`$false"
-    }
-    Write-Host ""
-    Write-Host "Test SOCKS locally:"
-    Write-Host "  curl --proxy socks5://$($creds.User):$($creds.Pass)@127.0.0.1:$socksPort https://api.ipify.org"
-    Write-Host ""
 }
 
 

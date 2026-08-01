@@ -119,12 +119,12 @@ func linuxVPSCommand(controllerURL, agentKey string) string {
 	if agentKey == "" {
 		return fmt.Sprintf(
 			`# Save Settings first to generate an agent key, then refresh this page.
-curl -fsSL https://raw.githubusercontent.com/Skillz147/TrinityProxy/main/scripts/install-agent-service.sh | CONTROLLER_URL=%q TRINITY_NONINTERACTIVE=1 bash`,
+curl -fsSL https://raw.githubusercontent.com/Skillz147/TrinityProxy/main/scripts/install-agent-service.sh | CONTROLLER_URL=%q TRINITY_LOG_LEVEL=info TRINITY_NONINTERACTIVE=1 bash`,
 			controllerURL,
 		)
 	}
 	return fmt.Sprintf(
-		`curl -fsSL https://raw.githubusercontent.com/Skillz147/TrinityProxy/main/scripts/install-agent-service.sh | CONTROLLER_URL=%q TRINITY_AGENT_KEY=%q TRINITY_NONINTERACTIVE=1 bash`,
+		`curl -fsSL https://raw.githubusercontent.com/Skillz147/TrinityProxy/main/scripts/install-agent-service.sh | CONTROLLER_URL=%q TRINITY_AGENT_KEY=%q TRINITY_LOG_LEVEL=info TRINITY_NONINTERACTIVE=1 bash`,
 		controllerURL,
 		agentKey,
 	)
@@ -137,7 +137,7 @@ func psSingleQuoted(s string) string {
 func windowsBootstrapOneLiner(controllerURL, agentKey string) string {
 	scriptURL := psSingleQuoted(githubRawInstallScript)
 	ctrl := psSingleQuoted(controllerURL)
-	inner := fmt.Sprintf("$env:CONTROLLER_URL=%s; $env:TRINITY_NONINTERACTIVE='1'", ctrl)
+	inner := fmt.Sprintf("$env:CONTROLLER_URL=%s; $env:TRINITY_NONINTERACTIVE='1'; $env:TRINITY_LOG_LEVEL='info'", ctrl)
 	if agentKey != "" {
 		inner += fmt.Sprintf("; $env:TRINITY_AGENT_KEY=%s", psSingleQuoted(agentKey))
 	}
@@ -152,13 +152,13 @@ make sync-agent-key
 make install-agent-macos
 
 # Or run the script directly (after make build):
-CONTROLLER_URL=%q ./scripts/install-agent-macos.sh`, controllerURL)
+CONTROLLER_URL=%q TRINITY_LOG_LEVEL=info ./scripts/install-agent-macos.sh`, controllerURL)
 	}
 	return fmt.Sprintf(`make sync-agent-key
 make install-agent-macos
 
 # Or run the script directly (after make build):
-CONTROLLER_URL=%q TRINITY_AGENT_KEY=%q ./scripts/install-agent-macos.sh`, controllerURL, agentKey)
+CONTROLLER_URL=%q TRINITY_AGENT_KEY=%q TRINITY_LOG_LEVEL=info ./scripts/install-agent-macos.sh`, controllerURL, agentKey)
 }
 
 func windowsCommand(controllerURL, agentKey string) string {

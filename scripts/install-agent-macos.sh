@@ -9,11 +9,83 @@
 #   TRINITY_AGENT_KEY — heartbeat auth key (must match controller)
 #   TRINITY_DEVICE_CLASS — desktop|vps (default: desktop)
 #   TRINITY_SOCKS_PORT — embedded SOCKS listen port (default: 1080)
+#   TRINITY_LOG_LEVEL — quiet | silent | info | debug (default: info)
 #
 # Usage:
 #   CONTROLLER_URL=http://127.0.0.1:3100 TRINITY_AGENT_KEY=... ./scripts/install-agent-macos.sh
 
 set -euo pipefail
+
+TRINITY_LOG_LEVEL="${TRINITY_LOG_LEVEL:-info}"
+TRINITY_LOG_LEVEL="$(echo "$TRINITY_LOG_LEVEL" | tr '[:upper:]' '[:lower:]')"
+
+case "$TRINITY_LOG_LEVEL" in
+	quiet|total-silent|totalsilent) TRINITY_LOG_LEVEL="quiet" ;;
+	silent|info|debug) ;;
+	*)
+		echo "[!] Invalid TRINITY_LOG_LEVEL '$TRINITY_LOG_LEVEL' (use: quiet, silent, info, debug)" >&2
+		exit 1
+		;;
+esac
+
+log_at_least() {
+	local min=$1
+	case "$TRINITY_LOG_LEVEL" in
+		quiet) [[ "$min" == "quiet" ]] ;;
+		silent) [[ "$min" == "quiet" || "$min" == "silent" ]] ;;
+		info) [[ "$min" != "debug" ]] ;;
+		debug) true ;;
+	esac
+}
+
+log_debug() {
+	[[ "$TRINITY_LOG_LEVEL" == "debug" ]] && echo "[debug] $*" >&2 || true
+}
+
+log_info() {
+	log_at_least info && echo "[*] $*" || true
+}
+
+log_ok() {
+	log_at_least info && echo "[+] $*" || true
+}
+
+log_warn() {
+	[[ "$TRINITY_LOG_LEVEL" != "quiet" ]] && echo "[!] $*" >&2 || true
+}
+
+fail() {
+	echo "[!] $*" >&2
+	exit 1
+}
+
+log_start() {
+	case "$TRINITY_LOG_LEVEL" in
+		quiet) ;;
+		silent) echo "[*] TrinityProxy: installing..." ;;
+		info|debug)
+			echo "[*] Installing TrinityProxy Agent as launchd service..."
+			;;
+	esac
+}
+
+log_done() {
+	case "$TRINITY_LOG_LEVEL" in
+		quiet) ;;
+		silent) echo "[+] TrinityProxy: setup complete" ;;
+		info|debug)
+			echo "[+] TrinityProxy Agent installed successfully!"
+			echo ""
+			echo "Service Management:"
+			echo "  Status:  launchctl print gui/$(id -u)/$LABEL"
+			echo "  Logs:    tail -f ${LOG_DIR}/${SERVICE_NAME}.log"
+			echo "  Stop:    launchctl bootout gui/$(id -u)/$LABEL"
+			echo "  Start:   launchctl bootstrap gui/$(id -u) $PLIST_PATH"
+			echo ""
+			echo "Plist: $PLIST_PATH"
+			;;
+	esac
+}
 
 LABEL="com.trinityproxy.agent"
 SERVICE_NAME="trinityproxy-agent"
@@ -23,11 +95,6 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 BINARY="$PROJECT_ROOT/build/trinityproxy"
 LOG_DIR="$PROJECT_ROOT/.dev"
 PLIST_PATH="$HOME/Library/LaunchAgents/${LABEL}.plist"
-
-fail() {
-	echo "[!] $*" >&2
-	exit 1
-}
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
 	fail "This script is for macOS only. On Linux, use: sudo scripts/install-agent-service.sh"
@@ -46,19 +113,20 @@ TRINITY_AGENT_KEY="${TRINITY_AGENT_KEY:-}"
 TRINITY_DEVICE_CLASS="${TRINITY_DEVICE_CLASS:-desktop}"
 TRINITY_SOCKS_PORT="${TRINITY_SOCKS_PORT:-1080}"
 
-echo "[*] Installing TrinityProxy Agent as launchd service..."
-echo "[*] Controller: $CONTROLLER_URL"
-echo "[*] Device class: $TRINITY_DEVICE_CLASS"
-echo "[*] Embedded SOCKS port: $TRINITY_SOCKS_PORT"
+log_start
+log_info "Controller: $CONTROLLER_URL"
+log_info "Device class: $TRINITY_DEVICE_CLASS"
+log_info "Embedded SOCKS port: $TRINITY_SOCKS_PORT"
+log_debug "Binary=$BINARY plist=$PLIST_PATH log_level=$TRINITY_LOG_LEVEL"
 if [[ -z "$TRINITY_AGENT_KEY" ]]; then
-	echo "[!] TRINITY_AGENT_KEY unset — heartbeats will be unauthenticated (dev mode)"
+	log_warn "TRINITY_AGENT_KEY unset — heartbeats will be unauthenticated (dev mode)"
 fi
 
 mkdir -p "$LOG_DIR" "$HOME/Library/LaunchAgents"
 
 # Stop and unload existing agent if present
 if launchctl print "gui/$(id -u)/$LABEL" &>/dev/null; then
-	echo "[*] Stopping existing $LABEL service..."
+	log_info "Stopping existing $LABEL service..."
 	launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
 fi
 
@@ -116,18 +184,11 @@ cat > "$PLIST_PATH" <<EOF
 EOF
 
 chmod 644 "$PLIST_PATH"
+log_debug "Wrote plist to $PLIST_PATH"
 
-echo "[*] Loading launchd service..."
+log_info "Loading launchd service..."
 launchctl bootstrap "gui/$(id -u)" "$PLIST_PATH"
 launchctl enable "gui/$(id -u)/$LABEL" 2>/dev/null || true
 launchctl kickstart -k "gui/$(id -u)/$LABEL"
 
-echo "[+] TrinityProxy Agent installed successfully!"
-echo ""
-echo "Service Management:"
-echo "  Status:  launchctl print gui/$(id -u)/$LABEL"
-echo "  Logs:    tail -f ${LOG_DIR}/${SERVICE_NAME}.log"
-echo "  Stop:    launchctl bootout gui/$(id -u)/$LABEL"
-echo "  Start:   launchctl bootstrap gui/$(id -u) $PLIST_PATH"
-echo ""
-echo "Plist: $PLIST_PATH"
+log_done

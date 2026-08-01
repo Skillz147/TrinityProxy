@@ -6,11 +6,92 @@
 #
 # Non-interactive env (optional, injected into systemd unit):
 #   CONTROLLER_URL, TRINITY_AGENT_KEY, TRINITY_DEVICE_CLASS
+#   TRINITY_LOG_LEVEL — quiet | silent | info | debug (default: info)
 #
 # Usage:
 #   sudo CONTROLLER_URL=http://controller:3100 TRINITY_AGENT_KEY=... ./scripts/install-agent-service.sh
 
 set -euo pipefail
+
+TRINITY_LOG_LEVEL="${TRINITY_LOG_LEVEL:-info}"
+TRINITY_LOG_LEVEL="$(echo "$TRINITY_LOG_LEVEL" | tr '[:upper:]' '[:lower:]')"
+
+case "$TRINITY_LOG_LEVEL" in
+    quiet|total-silent|totalsilent) TRINITY_LOG_LEVEL="quiet" ;;
+    silent|info|debug) ;;
+    *)
+        echo "[!] Invalid TRINITY_LOG_LEVEL '$TRINITY_LOG_LEVEL' (use: quiet, silent, info, debug)" >&2
+        exit 1
+        ;;
+esac
+
+log_at_least() {
+    local min=$1
+    case "$TRINITY_LOG_LEVEL" in
+        quiet) [[ "$min" == "quiet" ]] ;;
+        silent) [[ "$min" == "quiet" || "$min" == "silent" ]] ;;
+        info) [[ "$min" != "debug" ]] ;;
+        debug) true ;;
+    esac
+}
+
+log_debug() {
+    [[ "$TRINITY_LOG_LEVEL" == "debug" ]] && echo "[debug] $*" >&2 || true
+}
+
+log_info() {
+    log_at_least info && echo "[*] $*" || true
+}
+
+log_ok() {
+    log_at_least info && echo "[+] $*" || true
+}
+
+log_warn() {
+    [[ "$TRINITY_LOG_LEVEL" != "quiet" ]] && echo "[!] $*" >&2 || true
+}
+
+fail() {
+    echo "[!] $*" >&2
+    exit 1
+}
+
+hint() {
+    log_info "$*"
+}
+
+log_start() {
+    case "$TRINITY_LOG_LEVEL" in
+        quiet) ;;
+        silent) echo "[*] TrinityProxy: installing..." ;;
+        info|debug) echo "[*] Installing TrinityProxy Agent as systemd service..." ;;
+    esac
+}
+
+log_done() {
+    case "$TRINITY_LOG_LEVEL" in
+        quiet) ;;
+        silent) echo "[+] TrinityProxy: setup complete" ;;
+        info|debug)
+            echo "[+] TrinityProxy Agent service installed successfully!"
+            echo ""
+            echo "Runtime user: $AGENT_USER (non-root heartbeat)"
+            echo "Distro family: $DISTRO_FAMILY"
+            echo "Install step: build/installer ran once as root for /etc/ and Dante setup"
+            echo "Credentials:  root:${AGENT_GROUP} mode 640 on /etc/trinityproxy-*"
+            echo ""
+            echo "Service Management Commands:"
+            echo "  Start:   sudo systemctl start $SERVICE_NAME"
+            echo "  Stop:    sudo systemctl stop $SERVICE_NAME"
+            echo "  Status:  sudo systemctl status $SERVICE_NAME"
+            echo "  Logs:    sudo journalctl -u $SERVICE_NAME -f"
+            echo "  Restart: sudo systemctl restart $SERVICE_NAME"
+            echo ""
+            echo "The service will automatically start on boot."
+            echo "Run 'sudo systemctl start $SERVICE_NAME' to start it now."
+            ;;
+    esac
+}
 
 AGENT_USER="trinityproxy-agent"
 AGENT_GROUP="trinityproxy-agent"
@@ -29,15 +110,6 @@ SYSTEMD_PATH="/etc/systemd/system/${SERVICE_NAME}.service"
 
 DISTRO_FAMILY="unknown"
 PKG_HINT="install dante-server (provides sockd) using your distro package manager"
-
-fail() {
-    echo "[!] $*" >&2
-    exit 1
-}
-
-hint() {
-    echo "[*] $*"
-}
 
 detect_platform() {
     local uname_s
@@ -111,9 +183,10 @@ detect_distro() {
                 ;;
         esac
 
-        echo "[*] Detected: ${PRETTY_NAME:-Linux} (family: ${DISTRO_FAMILY})"
+        log_info "Detected: ${PRETTY_NAME:-Linux} (family: ${DISTRO_FAMILY})"
+        log_debug "Distro family=$DISTRO_FAMILY pkg_hint=$PKG_HINT"
     else
-        echo "[!] Could not read /etc/os-release — assuming generic Linux"
+        log_warn "Could not read /etc/os-release — assuming generic Linux"
         if command -v apt-get >/dev/null 2>&1; then
             DISTRO_FAMILY="debian"
             PKG_HINT="sudo apt-get update && sudo apt-get install -y dante-server"
@@ -134,7 +207,7 @@ check_dependencies() {
     local missing=0
 
     if ! command -v useradd >/dev/null 2>&1; then
-        echo "[!] useradd not found — required to create the $AGENT_USER system user"
+        log_warn "useradd not found — required to create the $AGENT_USER system user"
         case "$DISTRO_FAMILY" in
             alpine)
                 hint "Install shadow: sudo apk add --no-cache shadow"
@@ -150,7 +223,7 @@ check_dependencies() {
     fi
 
     if ! command -v sockd >/dev/null 2>&1 && ! command -v danted >/dev/null 2>&1; then
-        echo "[!] Dante SOCKS server not found (sockd/danted not in PATH)"
+        log_warn "Dante SOCKS server not found (sockd/danted not in PATH)"
         hint "Install with: $PKG_HINT"
         hint "Or run 'make install-dante' from the project root"
         missing=1
@@ -163,33 +236,37 @@ check_dependencies() {
 
 create_agent_user() {
     if ! id "$AGENT_USER" &>/dev/null; then
-        echo "[*] Creating system user: $AGENT_USER"
+        log_info "Creating system user: $AGENT_USER"
         useradd --system --no-create-home --shell /usr/sbin/nologin \
             --home-dir "$STATE_DIR" "$AGENT_USER"
     else
-        echo "[*] System user $AGENT_USER already exists"
+        log_info "System user $AGENT_USER already exists"
     fi
     install -d -o "$AGENT_USER" -g "$AGENT_GROUP" -m 750 "$STATE_DIR"
+    log_debug "State dir=$STATE_DIR"
 }
 
 setup_project_permissions() {
-    echo "[*] Setting project permissions for $AGENT_USER (read/execute only)"
+    log_info "Setting project permissions for $AGENT_USER (read/execute only)"
+    log_debug "Project root=$PROJECT_ROOT"
     chmod o+rX "$PROJECT_ROOT" "$PROJECT_ROOT/build" 2>/dev/null || true
     chmod o+r "$PROJECT_ROOT/build/trinityproxy" "$PROJECT_ROOT/build/installer" 2>/dev/null || true
 }
 
 set_credential_permissions() {
-    echo "[*] Setting credential file ownership for $AGENT_USER"
+    log_info "Setting credential file ownership for $AGENT_USER"
     for path in "${CREDENTIAL_PATHS[@]}"; do
         if [[ -f "$path" ]]; then
             chown root:"$AGENT_GROUP" "$path"
             chmod 640 "$path"
+            log_debug "Credential file $path -> root:${AGENT_GROUP} 640"
         fi
     done
 }
 
 run_installer_once() {
-    echo "[*] Running one-time SOCKS installer as root (writes /etc/trinityproxy-*)..."
+    log_info "Running one-time SOCKS installer as root (writes /etc/trinityproxy-*)..."
+    log_debug "Executing $PROJECT_ROOT/build/installer"
     "$PROJECT_ROOT/build/installer"
     set_credential_permissions
 }
@@ -197,6 +274,7 @@ run_installer_once() {
 install_service_file() {
     local tmp
     tmp="$(mktemp)"
+    log_debug "Installing systemd unit from $SERVICE_FILE to $SYSTEMD_PATH"
     sed -e "s|/root/TrinityProxy|$PROJECT_ROOT|g" "$SERVICE_FILE" > "$tmp"
 
     awk -v url="${CONTROLLER_URL:-}" -v key="${TRINITY_AGENT_KEY:-}" -v devclass="${TRINITY_DEVICE_CLASS:-}" '
@@ -213,9 +291,10 @@ install_service_file() {
 
     install -m 644 "$tmp" "$SYSTEMD_PATH"
     rm -f "$tmp"
+    log_debug "Injected CONTROLLER_URL=${CONTROLLER_URL:-} TRINITY_DEVICE_CLASS=${TRINITY_DEVICE_CLASS:-}"
 }
 
-echo "[*] Installing TrinityProxy Agent as systemd service..."
+log_start
 
 detect_platform
 
@@ -243,22 +322,24 @@ if [[ ! -f "$PROJECT_ROOT/build/installer" ]]; then
 fi
 
 if [[ -n "${CONTROLLER_URL:-}" ]]; then
-    echo "[*] Controller URL: $CONTROLLER_URL"
+    log_info "Controller URL: $CONTROLLER_URL"
 else
-    echo "[!] CONTROLLER_URL not set — configure in $SYSTEMD_PATH or export before install"
+    log_warn "CONTROLLER_URL not set — configure in $SYSTEMD_PATH or export before install"
 fi
 
 if [[ -z "${TRINITY_AGENT_KEY:-}" ]]; then
-    echo "[!] TRINITY_AGENT_KEY unset — heartbeats will be unauthenticated (dev mode)"
+    log_warn "TRINITY_AGENT_KEY unset — heartbeats will be unauthenticated (dev mode)"
 fi
 
 if [[ -n "${TRINITY_DEVICE_CLASS:-}" ]]; then
-    echo "[*] Device class: $TRINITY_DEVICE_CLASS"
+    log_info "Device class: $TRINITY_DEVICE_CLASS"
 fi
+
+log_debug "Log level=$TRINITY_LOG_LEVEL service=$SERVICE_NAME"
 
 # Stop existing service if running
 if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
-    echo "[*] Stopping existing $SERVICE_NAME service..."
+    log_info "Stopping existing $SERVICE_NAME service..."
     systemctl stop "$SERVICE_NAME"
 fi
 
@@ -266,28 +347,13 @@ create_agent_user
 setup_project_permissions
 run_installer_once
 
-echo "[*] Installing service file..."
+log_info "Installing service file..."
 install_service_file
 
-echo "[*] Reloading systemd daemon..."
+log_info "Reloading systemd daemon..."
 systemctl daemon-reload
 
-echo "[*] Enabling $SERVICE_NAME service..."
+log_info "Enabling $SERVICE_NAME service..."
 systemctl enable "$SERVICE_NAME"
 
-echo "[+] TrinityProxy Agent service installed successfully!"
-echo ""
-echo "Runtime user: $AGENT_USER (non-root heartbeat)"
-echo "Distro family: $DISTRO_FAMILY"
-echo "Install step: build/installer ran once as root for /etc/ and Dante setup"
-echo "Credentials:  root:${AGENT_GROUP} mode 640 on /etc/trinityproxy-*"
-echo ""
-echo "Service Management Commands:"
-echo "  Start:   sudo systemctl start $SERVICE_NAME"
-echo "  Stop:    sudo systemctl stop $SERVICE_NAME"
-echo "  Status:  sudo systemctl status $SERVICE_NAME"
-echo "  Logs:    sudo journalctl -u $SERVICE_NAME -f"
-echo "  Restart: sudo systemctl restart $SERVICE_NAME"
-echo ""
-echo "The service will automatically start on boot."
-echo "Run 'sudo systemctl start $SERVICE_NAME' to start it now."
+log_done
