@@ -55,7 +55,9 @@ $WrapperName = "start-agent.cmd"
 $DefaultSocksPortStart = 10800
 $DefaultSocksPortEnd = 10999
 # Bump when bootstrap cache under %TEMP%\TrinityProxy must be refreshed.
-$ScriptVersion = "4"
+$ScriptVersion = "5"
+# Max seconds to wait for the Windows service to reach Running after async start.
+$ServiceStartTimeoutSeconds = 45
 $DefaultReleaseBinaryUrl = "https://github.com/Skillz147/TrinityProxy/releases/download/latest/trinityproxy-windows-amd64.exe"
 
 function Resolve-LogLevel([string]$Raw) {
@@ -103,6 +105,192 @@ function Write-Warn([string]$Message) {
 
 function Write-Fail([string]$Message) {
     Write-Host "   ERROR: $Message" -ForegroundColor Red
+}
+
+function Invoke-FileDownloadWithProgress {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Uri,
+        [Parameter(Mandatory = $true)]
+        [string]$OutFile
+    )
+
+    if (-not (Test-LogAtLeast "info")) {
+        Invoke-WebRequest -Uri $Uri -OutFile $OutFile -UseBasicParsing
+        return
+    }
+
+    $progressId = Get-Random -Minimum 1000 -Maximum 99999
+    $sourceId = "TrinityProxyDownload$progressId"
+    $wc = New-Object System.Net.WebClient
+    $wc.Headers.Add("User-Agent", "TrinityProxy-Installer")
+    $sub = Register-ObjectEvent -InputObject $wc -EventName DownloadProgressChanged -SourceIdentifier $sourceId -Action {
+        $pct = $EventArgs.ProgressPercentage
+        $receivedMB = [math]::Round($EventArgs.BytesReceived / 1MB, 2)
+        $totalMB = if ($EventArgs.TotalBytesToReceive -gt 0) {
+            [math]::Round($EventArgs.TotalBytesToReceive / 1MB, 2)
+        } else {
+            $null
+        }
+        $status = if ($null -ne $totalMB) { "$pct% ($receivedMB / $totalMB MB)" } else { "$pct% ($receivedMB MB received)" }
+        Write-Progress -Activity "Downloading TrinityProxy agent" -Status $status -PercentComplete $pct -Id $progressId
+    }
+
+    try {
+        $wc.DownloadFile($Uri, $OutFile)
+    }
+    finally {
+        Write-Progress -Activity "Downloading TrinityProxy agent" -Completed -Id $progressId
+        Unregister-Event -SourceIdentifier $sourceId -ErrorAction SilentlyContinue
+        if ($sub) {
+            Remove-Job -Job $sub -Force -ErrorAction SilentlyContinue
+        }
+        $wc.Dispose()
+    }
+}
+
+function Get-AgentServiceEnvironment {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$Port,
+        [Parameter(Mandatory = $true)]
+        [string]$SocksUser,
+        [Parameter(Mandatory = $true)]
+        [string]$SocksPass
+    )
+
+    $envMap = [ordered]@{
+        TRINITY_ROLE             = "agent"
+        TRINITY_NONINTERACTIVE   = "1"
+        TRINITY_SKIP_INSTALLER   = "1"
+        TRINITY_SOCKS_PORT       = "$Port"
+        TRINITY_SOCKS_USER       = $SocksUser
+        TRINITY_SOCKS_PASSWORD   = $SocksPass
+        CONTROLLER_URL           = $ControllerUrl
+        TRINITY_AGENT_KEY        = $AgentKey
+    }
+    if ($env:TRINITY_DEVICE_CLASS) {
+        $envMap.TRINITY_DEVICE_CLASS = $env:TRINITY_DEVICE_CLASS
+    }
+    return $envMap
+}
+
+function Set-ServiceEnvironment {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+        [Parameter(Mandatory = $true)]
+        [hashtable]$Variables
+    )
+
+    $envPath = "HKLM:\SYSTEM\CurrentControlSet\Services\$Name\Environment"
+    if (Test-Path -LiteralPath $envPath) {
+        Remove-Item -LiteralPath $envPath -Recurse -Force
+    }
+    New-Item -Path $envPath -Force | Out-Null
+    foreach ($key in $Variables.Keys) {
+        $value = $Variables[$key]
+        if ($null -ne $value -and "$value".Length -gt 0) {
+            New-ItemProperty -Path $envPath -Name $key -Value $value -PropertyType String -Force | Out-Null
+        }
+    }
+}
+
+function Wait-ServiceStatus {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("Running", "Stopped")]
+        [string]$DesiredStatus,
+        [int]$TimeoutSeconds = 15,
+        [string]$ProgressMessage = ""
+    )
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        $svc = Get-Service -Name $Name -ErrorAction SilentlyContinue
+        if ($svc -and $svc.Status -eq $DesiredStatus) {
+            return $true
+        }
+        if ($ProgressMessage -and (Test-LogAtLeast "info")) {
+            $remaining = [math]::Max(0, [int]($deadline - (Get-Date)).TotalSeconds)
+            Write-Host "   $ProgressMessage (${remaining}s remaining)..." -ForegroundColor DarkGray
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    return $false
+}
+
+function Wait-ServiceRemoved {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+        [int]$TimeoutSeconds = 15
+    )
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        if (-not (Get-Service -Name $Name -ErrorAction SilentlyContinue)) {
+            return $true
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    return $false
+}
+
+function Start-AgentServiceWithProgress {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+        [int]$TimeoutSeconds = $ServiceStartTimeoutSeconds
+    )
+
+    Write-Step "Starting the agent..."
+
+    $svc = Get-Service -Name $Name -ErrorAction SilentlyContinue
+    if (-not $svc) {
+        throw "Service '$Name' was not found after registration."
+    }
+    if ($svc.Status -eq "Running") {
+        Write-Ok "Agent is already running"
+        return
+    }
+
+    # sc.exe start blocks until SCM's ServicesPipeTimeout when the service never reports
+    # SERVICE_RUNNING (common with .cmd wrappers). WMI/CIM StartService returns immediately.
+    $wmiSvc = Get-CimInstance -ClassName Win32_Service -Filter "Name='$Name'" -ErrorAction Stop
+    $startResult = Invoke-CimMethod -InputObject $wmiSvc -MethodName StartService
+    $returnValue = [int]$startResult.ReturnValue
+    if ($returnValue -eq 10) {
+        Write-Ok "Agent is already running"
+        return
+    }
+    if ($returnValue -ne 0) {
+        throw "StartService failed (Win32 error $returnValue). Check Event Viewer > Windows Logs > Application for TrinityProxy errors."
+    }
+
+    $startedAt = Get-Date
+    $deadline = $startedAt.AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        $svc = Get-Service -Name $Name -ErrorAction SilentlyContinue
+        if ($svc -and $svc.Status -eq "Running") {
+            Write-Ok "Agent is running in the background"
+            return
+        }
+        if ($svc -and $svc.Status -eq "Stopped") {
+            throw "Service stopped immediately after start. Run manually: `"$InstallDir\$WrapperName`" — or check Event Viewer > Application."
+        }
+        if (Test-LogAtLeast "info") {
+            $elapsed = [int]((Get-Date) - $startedAt).TotalSeconds
+            Write-Host "   Waiting for agent service... ${elapsed}s" -ForegroundColor DarkGray
+        }
+        Start-Sleep -Seconds 1
+    }
+
+    $final = Get-Service -Name $Name -ErrorAction SilentlyContinue
+    $status = if ($final) { $final.Status } else { "missing" }
+    throw "Service did not reach Running within ${TimeoutSeconds}s (status: $status). Test manually: `"$InstallDir\$WrapperName`" or use -UseScheduledTask."
 }
 
 function Write-InstallStart {
@@ -255,7 +443,7 @@ function Invoke-BootstrapRepoAndReenter {
         if (Test-LogAtLeast "info") {
             Write-Host "   Downloading: $zipURL"
         }
-        Invoke-WebRequest -Uri $zipURL -OutFile $zipFile -UseBasicParsing
+        Invoke-FileDownloadWithProgress -Uri $zipURL -OutFile $zipFile
         if (-not (Test-Path -LiteralPath $zipFile)) {
             Write-Fail "Download failed — archive not found."
             exit 1
@@ -526,7 +714,7 @@ function Resolve-SourceBinary {
         if (Test-LogAtLeast "info") {
             Write-Host "   From: $DownloadUrl"
         }
-        Invoke-WebRequest -Uri $DownloadUrl -OutFile $tempFile -UseBasicParsing
+        Invoke-FileDownloadWithProgress -Uri $DownloadUrl -OutFile $tempFile
         if (-not (Test-Path -LiteralPath $tempFile)) {
             throw "Download failed — file not found after download."
         }
@@ -581,53 +769,57 @@ function Ensure-FirewallRule([int]$Port) {
 function Write-WrapperScript([string]$TargetDir, [int]$Port, [string]$SocksUser, [string]$SocksPass) {
     $wrapperPath = Join-Path $TargetDir $WrapperName
     $exePath = Join-Path $TargetDir $BinaryName
+    $envMap = Get-AgentServiceEnvironment -Port $Port -SocksUser $SocksUser -SocksPass $SocksPass
 
     $lines = @(
         "@echo off",
-        "rem TrinityProxy agent launcher — do not edit; re-run install-agent-windows.ps1 to update",
-        "set TRINITY_ROLE=agent",
-        "set TRINITY_NONINTERACTIVE=1",
-        "set TRINITY_SKIP_INSTALLER=1",
-        ("set TRINITY_SOCKS_PORT=" + $Port),
-        ("set TRINITY_SOCKS_USER=" + $SocksUser),
-        ("set TRINITY_SOCKS_PASSWORD=" + $SocksPass),
-        ("set CONTROLLER_URL=" + $ControllerUrl),
-        ("set TRINITY_AGENT_KEY=" + $AgentKey),
-        'cd /d "%~dp0"',
-        ('"' + $exePath + '"')
+        "rem TrinityProxy agent launcher — do not edit; re-run install-agent-windows.ps1 to update"
     )
-
-    if ($env:TRINITY_DEVICE_CLASS) {
-        $lines = $lines[0..($lines.Length - 2)] + ("set TRINITY_DEVICE_CLASS=" + $env:TRINITY_DEVICE_CLASS) + $lines[-1]
+    foreach ($key in $envMap.Keys) {
+        $lines += ("set " + $key + "=" + $envMap[$key])
     }
+    $lines += 'cd /d "%~dp0"'
+    $lines += ('"' + $exePath + '"')
 
     Set-Content -Path $wrapperPath -Value ($lines -join "`r`n") -Encoding ASCII
     return $wrapperPath
 }
 
-function Install-WindowsService([string]$WrapperPath) {
+function Install-WindowsService {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ExePath,
+        [Parameter(Mandatory = $true)]
+        [hashtable]$ServiceEnv
+    )
+
     $existing = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
     if ($existing) {
         Write-Step "Updating existing Windows service..."
         if ($existing.Status -eq "Running") {
             Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
-            Start-Sleep -Seconds 2
+            if (-not (Wait-ServiceStatus -Name $ServiceName -DesiredStatus "Stopped" -TimeoutSeconds 15 -ProgressMessage "Stopping existing service")) {
+                Write-Warn "Existing service did not stop cleanly; continuing with reinstall"
+            }
         }
         & sc.exe delete $ServiceName | Out-Null
-        Start-Sleep -Seconds 2
+        if (-not (Wait-ServiceRemoved -Name $ServiceName -TimeoutSeconds 15)) {
+            Write-Warn "Previous service entry still present; sc.exe delete may have failed"
+        }
     }
 
     Write-Step "Registering Windows service..."
-    $binArg = "`"$WrapperPath`""
+    $binArg = "`"$ExePath`""
     Write-Debug "sc.exe create $ServiceName binPath= $binArg start= auto DisplayName= $ServiceDisplayName"
     & sc.exe create $ServiceName binPath= $binArg start= auto DisplayName= $ServiceDisplayName | Out-Null
     if ($LASTEXITCODE -ne 0) {
         throw "sc.exe create failed (exit $LASTEXITCODE). Try running this script as Administrator."
     }
 
+    Set-ServiceEnvironment -Name $ServiceName -Variables $ServiceEnv
     & sc.exe description $ServiceName "TrinityProxy agent — embedded SOCKS5 proxy and controller heartbeats" | Out-Null
     & sc.exe failure $ServiceName reset= 86400 actions= restart/60000/restart/60000/restart/60000 | Out-Null
-    Write-Ok "Service registered: $ServiceName"
+    Write-Ok "Service registered: $ServiceName (runs $BinaryName directly with registry environment)"
 }
 
 function Install-ScheduledTaskFallback([string]$WrapperPath) {
@@ -670,25 +862,24 @@ function Install-UninstallSupport([string]$TargetDir) {
     Set-ItemProperty -Path $key -Name NoRepair -Value 1 -Type DWord
 }
 
-function Start-AgentBackground([string]$WrapperPath) {
+function Start-AgentBackground {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$WrapperPath,
+        [Parameter(Mandatory = $true)]
+        [string]$ExePath,
+        [Parameter(Mandatory = $true)]
+        [hashtable]$ServiceEnv
+    )
+
     if ($UseScheduledTask) {
         Install-ScheduledTaskFallback -WrapperPath $WrapperPath
         return
     }
 
     try {
-        Install-WindowsService -WrapperPath $WrapperPath
-        Write-Step "Starting the agent..."
-        & sc.exe start $ServiceName | Out-Null
-        Start-Sleep -Seconds 3
-
-        $svc = Get-Service -Name $ServiceName -ErrorAction Stop
-        if ($svc.Status -eq "Running") {
-            Write-Ok "Agent is running in the background"
-            return
-        }
-
-        throw "Service installed but not running (status: $($svc.Status))."
+        Install-WindowsService -ExePath $ExePath -ServiceEnv $ServiceEnv
+        Start-AgentServiceWithProgress -Name $ServiceName
     }
     catch {
         Write-Warn "Windows service setup failed: $($_.Exception.Message)"
@@ -791,7 +982,7 @@ function Invoke-AgentInstallCore {
     Install-UninstallSupport -TargetDir $InstallDir
     Write-Ok "Registered uninstall entry in Windows Apps & features"
 
-    Start-AgentBackground -WrapperPath $wrapperPath
+    Start-AgentBackground -WrapperPath $wrapperPath -ExePath $targetBinary -ServiceEnv (Get-AgentServiceEnvironment -Port $socksPort -SocksUser $creds.User -SocksPass $creds.Pass)
 
     Write-InstallComplete @{
         ControllerUrl     = $ControllerUrl
