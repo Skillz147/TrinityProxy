@@ -127,6 +127,8 @@ func TestWindowsRemoveOneLiner(t *testing.T) {
 	for _, want := range []string{
 		"TrinityProxyAgent",
 		"Stop-Service",
+		"Stop-Process",
+		"Get-Process",
 		"sc.exe delete",
 		"TrinityProxy SOCKS5",
 		"Remove-NetFirewallRule",

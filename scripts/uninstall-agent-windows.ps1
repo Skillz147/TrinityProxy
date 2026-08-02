@@ -20,6 +20,7 @@ $ErrorActionPreference = "Stop"
 
 $ServiceName = "TrinityProxyAgent"
 $ServiceDisplayName = "TrinityProxy Agent"
+$ProcessNames = @("trinityproxy", "TrinityProxyAgent")
 
 function Write-Step([string]$Message) {
     Write-Host ""
@@ -48,10 +49,37 @@ function Stop-AgentService {
 
     Write-Step "Stopping TrinityProxy agent service..."
     if ($svc.Status -eq "Running") {
-        Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
-        Start-Sleep -Seconds 3
+        Stop-Service -Name $ServiceName -ErrorAction SilentlyContinue
+        $deadline = (Get-Date).AddSeconds(15)
+        while ((Get-Date) -lt $deadline) {
+            $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+            if (-not $svc -or $svc.Status -ne "Running") {
+                break
+            }
+            Start-Sleep -Seconds 1
+        }
+        $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+        if ($svc -and $svc.Status -eq "Running") {
+            Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 2
+        }
     }
     Write-Ok "Service stopped (graceful shutdown sends deregister when supported)"
+}
+
+function Stop-AgentProcesses {
+    Write-Step "Stopping any remaining TrinityProxy processes..."
+    $stopped = $false
+    foreach ($name in $ProcessNames) {
+        Get-Process -Name $name -ErrorAction SilentlyContinue | ForEach-Object {
+            Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+            $stopped = $true
+        }
+    }
+    if ($stopped) {
+        Start-Sleep -Seconds 2
+    }
+    Write-Ok "Agent processes terminated"
 }
 
 function Remove-AgentService {
@@ -67,6 +95,7 @@ function Remove-AgentService {
     $task = Get-ScheduledTask -TaskName $ServiceName -ErrorAction SilentlyContinue
     if ($task) {
         Write-Step "Removing scheduled task..."
+        Stop-ScheduledTask -TaskName $ServiceName -ErrorAction SilentlyContinue
         Unregister-ScheduledTask -TaskName $ServiceName -Confirm:$false
         Write-Ok "Scheduled task removed"
     }
@@ -92,8 +121,21 @@ function Remove-InstallDirectory {
     }
 
     Write-Step "Removing install directory..."
-    Remove-Item -LiteralPath $InstallDir -Recurse -Force
-    Write-Ok "Removed $InstallDir"
+    $maxAttempts = 5
+    for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+        try {
+            Remove-Item -LiteralPath $InstallDir -Recurse -Force -ErrorAction Stop
+            Write-Ok "Removed $InstallDir"
+            return
+        } catch {
+            if ($attempt -ge $maxAttempts) {
+                throw
+            }
+            Write-Warn "Remove-Item failed (attempt $attempt/$maxAttempts); retrying..."
+            Stop-AgentProcesses
+            Start-Sleep -Seconds 2
+        }
+    }
 }
 
 function Remove-UninstallRegistryEntry {
@@ -114,6 +156,7 @@ Write-Host "  TrinityProxy — Windows Agent Uninstall" -ForegroundColor White
 Write-Host "========================================" -ForegroundColor White
 
 Stop-AgentService
+Stop-AgentProcesses
 Remove-AgentService
 Remove-FirewallRules
 Remove-InstallDirectory
