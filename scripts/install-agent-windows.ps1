@@ -279,7 +279,7 @@ function Start-AgentServiceWithProgress {
             return
         }
         if ($svc -and $svc.Status -eq "Stopped") {
-            throw "Service stopped immediately after start. Run manually: `"$InstallDir\$WrapperName`" — or check Event Viewer > Application."
+            throw "Service stopped immediately after start. Run manually: `"$InstallDir\$WrapperName`" - or check Event Viewer > Application."
         }
         if (Test-LogAtLeast "info") {
             $elapsed = [int]((Get-Date) - $startedAt).TotalSeconds
@@ -301,7 +301,7 @@ function Write-InstallStart {
     }
     Write-Host ""
     Write-Host "========================================" -ForegroundColor White
-    Write-Host "  TrinityProxy — Windows Agent Setup" -ForegroundColor White
+    Write-Host "  TrinityProxy - Windows Agent Setup" -ForegroundColor White
     Write-Host "========================================" -ForegroundColor White
 }
 
@@ -328,7 +328,7 @@ function Write-InstallComplete([hashtable]$Summary) {
     Write-Host "            $($Summary.InstallDir)\trinityproxy-port"
     Write-Host ""
     Write-Host "The agent runs in the background and starts automatically when Windows boots."
-    Write-Host "Open your TrinityProxy dashboard Agents page — the node should appear within about a minute."
+    Write-Host "Open your TrinityProxy dashboard Agents page - the node should appear within about a minute."
     Write-Host ""
     Write-Host "Useful commands (run PowerShell as Administrator):"
     if (-not $Summary.UseScheduledTask -and (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue)) {
@@ -445,7 +445,7 @@ function Invoke-BootstrapRepoAndReenter {
         }
         Invoke-FileDownloadWithProgress -Uri $zipURL -OutFile $zipFile
         if (-not (Test-Path -LiteralPath $zipFile)) {
-            Write-Fail "Download failed — archive not found."
+            Write-Fail "Download failed - archive not found."
             exit 1
         }
 
@@ -496,7 +496,7 @@ function Invoke-BootstrapRepoAndReenter {
     if (Test-LogAtLeast "info") {
         Write-Ok "Running installer from $cloneDir"
     }
-    # Re-enter via environment only — never splat script parameters.
+    # Re-enter via environment only - never splat script parameters.
     & $installer
     exit $LASTEXITCODE
 }
@@ -514,7 +514,7 @@ function Try-Build-WindowsBinary {
         return $null
     }
 
-    Write-Step "Building $BinaryName with Go (windows/amd64 — may take a few minutes)..."
+    Write-Step "Building $BinaryName with Go (windows/amd64 - may take a few minutes)..."
     New-Item -ItemType Directory -Path $outDir -Force | Out-Null
     Push-Location $repoRoot
     try {
@@ -716,7 +716,7 @@ function Resolve-SourceBinary {
         }
         Invoke-FileDownloadWithProgress -Uri $DownloadUrl -OutFile $tempFile
         if (-not (Test-Path -LiteralPath $tempFile)) {
-            throw "Download failed — file not found after download."
+            throw "Download failed - file not found after download."
         }
         Write-Ok "Download complete"
         return $tempFile
@@ -773,7 +773,7 @@ function Write-WrapperScript([string]$TargetDir, [int]$Port, [string]$SocksUser,
 
     $lines = @(
         "@echo off",
-        "rem TrinityProxy agent launcher — do not edit; re-run install-agent-windows.ps1 to update"
+        "rem TrinityProxy agent launcher - do not edit; re-run install-agent-windows.ps1 to update"
     )
     foreach ($key in $envMap.Keys) {
         $lines += ("set " + $key + "=" + $envMap[$key])
@@ -817,7 +817,7 @@ function Install-WindowsService {
     }
 
     Set-ServiceEnvironment -Name $ServiceName -Variables $ServiceEnv
-    & sc.exe description $ServiceName "TrinityProxy agent — embedded SOCKS5 proxy and controller heartbeats" | Out-Null
+    & sc.exe description $ServiceName "TrinityProxy agent - embedded SOCKS5 proxy and controller heartbeats" | Out-Null
     & sc.exe failure $ServiceName reset= 86400 actions= restart/60000/restart/60000/restart/60000 | Out-Null
     Write-Ok "Service registered: $ServiceName (runs $BinaryName directly with registry environment)"
 }
@@ -837,7 +837,7 @@ function Install-ScheduledTaskFallback([string]$WrapperPath) {
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
     $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
 
-    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($triggerBoot, $triggerLogon) -Settings $settings -Principal $principal -Description "TrinityProxy agent — embedded SOCKS5 proxy and controller heartbeats" | Out-Null
+    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($triggerBoot, $triggerLogon) -Settings $settings -Principal $principal -Description "TrinityProxy agent - embedded SOCKS5 proxy and controller heartbeats" | Out-Null
     Start-ScheduledTask -TaskName $taskName
     Write-Ok "Scheduled task registered and started: $taskName"
 }

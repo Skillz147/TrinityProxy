@@ -152,7 +152,7 @@ if (-not (Test-Admin)) {
 
 Write-Host ""
 Write-Host "========================================" -ForegroundColor White
-Write-Host "  TrinityProxy — Windows Agent Uninstall" -ForegroundColor White
+Write-Host "  TrinityProxy - Windows Agent Uninstall" -ForegroundColor White
 Write-Host "========================================" -ForegroundColor White
 
 Stop-AgentService
