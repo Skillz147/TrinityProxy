@@ -45,7 +45,7 @@ $env:TRINITY_SOCKS_PORT = "1080"
 $env:TRINITY_SOCKS_USER = "dev"
 $env:TRINITY_SOCKS_PASSWORD = "dev"
 $env:CONTROLLER_URL = "https://api.yourdomain.com"
-$env:TRINITY_AGENT_KEY = "paste-key-from-dashboard"
+$env:TRINITY_ENROLLMENT_KEY = "paste-key-from-dashboard"
 .\build\trinityproxy.exe
 ```
 
@@ -64,7 +64,7 @@ For local dev testing only, `TRINITY_DEV=1` with `dev`/`dev` credentials is fine
 ```powershell
 cd C:\path\to\TrinityProxy
 $env:CONTROLLER_URL = "https://api.yourdomain.com"
-$env:TRINITY_AGENT_KEY = "paste-key-from-dashboard"
+$env:TRINITY_ENROLLMENT_KEY = "paste-key-from-dashboard"
 $env:TRINITY_NONINTERACTIVE = "1"
 .\scripts\install-agent-windows.ps1
 ```
@@ -75,13 +75,13 @@ The installer auto-picks a free SOCKS port (10800–10999), generates random cre
 
 ```powershell
 $env:CONTROLLER_URL = "https://api.yourdomain.com"
-$env:TRINITY_AGENT_KEY = "paste-key-from-dashboard"
+$env:TRINITY_ENROLLMENT_KEY = "paste-key-from-dashboard"
 $env:TRINITY_NONINTERACTIVE = "1"
 $env:TRINITY_LOCAL_BINARY = "C:\Downloads\trinityproxy.exe"
 .\install-agent-windows.ps1
 ```
 
-Get `CONTROLLER_URL` and `TRINITY_AGENT_KEY` from your dashboard **Settings → Deploy Agent** page.
+Get `CONTROLLER_URL` and `TRINITY_ENROLLMENT_KEY` from your dashboard **Settings → Deploy Agent** page. Legacy installs may still use `TRINITY_AGENT_KEY`.
 
 The installer:
 - Copies `trinityproxy.exe` to `C:\Program Files\TrinityProxy`
@@ -111,7 +111,8 @@ Get-Content "C:\Program Files\TrinityProxy\trinityproxy-password"
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `CONTROLLER_URL` | Yes | Controller base URL (e.g. `https://api.example.com`) |
-| `TRINITY_AGENT_KEY` | Yes (prod) | Heartbeat auth key from dashboard Settings |
+| `TRINITY_ENROLLMENT_KEY` | Yes (prod) | Enrollment key from dashboard Deploy Agent (preferred) |
+| `TRINITY_AGENT_KEY` | No | Deprecated fallback; use `TRINITY_ENROLLMENT_KEY` instead |
 | `TRINITY_ROLE` | Yes | Must be `agent` (set automatically by installer) |
 | `TRINITY_NONINTERACTIVE` | Yes | Set to `1` for service/unattended mode |
 | `TRINITY_SKIP_INSTALLER` | Yes | Set to `1` — use embedded Go SOCKS instead of Dante |
@@ -157,7 +158,7 @@ Copy `build/trinityproxy.exe` to Windows and run the installer script above.
 |---------|-------------|
 | “Run as Administrator” error | Right-click PowerShell → Run as administrator |
 | Binary not found | Set `TRINITY_LOCAL_BINARY` to the full path of `trinityproxy.exe` |
-| Node not in dashboard | Check `CONTROLLER_URL` and `TRINITY_AGENT_KEY` match dashboard Settings |
+| Node not in dashboard | Check `CONTROLLER_URL` and `TRINITY_ENROLLMENT_KEY` match dashboard Settings |
 | Service won’t start | Re-run the installer; or use `-UseScheduledTask` for task-based startup |
 | SOCKS connection refused | Confirm firewall rule exists; check `TRINITY_SOCKS_PORT` matches |
 | Wrong SOCKS credentials | Read `trinityproxy-username` / `trinityproxy-password` in install folder |

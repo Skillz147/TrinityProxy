@@ -10,7 +10,8 @@
   Non-interactive when these environment variables are set:
     TRINITY_NONINTERACTIVE=1
     CONTROLLER_URL=https://api.yourdomain.com
-    TRINITY_AGENT_KEY=your-shared-secret
+    TRINITY_ENROLLMENT_KEY=your-enrollment-key   (preferred; from dashboard Deploy Agent)
+    TRINITY_AGENT_KEY=your-shared-secret         (deprecated fallback)
 
   Optional:
     TRINITY_LOG_LEVEL=info                Install verbosity: quiet | silent | info | debug (default: info)
@@ -33,6 +34,7 @@
 [CmdletBinding()]
 param(
     [string]$ControllerUrl = $env:CONTROLLER_URL,
+    [string]$EnrollmentKey = $env:TRINITY_ENROLLMENT_KEY,
     [string]$AgentKey = $env:TRINITY_AGENT_KEY,
     [string]$SocksPort = $env:TRINITY_SOCKS_PORT,
     [string]$LocalBinary = $env:TRINITY_LOCAL_BINARY,
@@ -55,7 +57,7 @@ $WrapperName = "start-agent.cmd"
 $DefaultSocksPortStart = 10800
 $DefaultSocksPortEnd = 10999
 # Bump when bootstrap cache under %TEMP%\TrinityProxy must be refreshed.
-$ScriptVersion = "5"
+$ScriptVersion = "6"
 # Max seconds to wait for the Windows service to reach Running after async start.
 $ServiceStartTimeoutSeconds = 45
 $DefaultReleaseBinaryUrl = "https://github.com/Skillz147/TrinityProxy/releases/download/latest/trinityproxy-windows-amd64.exe"
@@ -149,6 +151,16 @@ function Invoke-FileDownloadWithProgress {
     }
 }
 
+function Resolve-EnrollmentKey {
+    if ($EnrollmentKey -and $EnrollmentKey.Trim()) {
+        return $EnrollmentKey.Trim()
+    }
+    if ($AgentKey -and $AgentKey.Trim()) {
+        return $AgentKey.Trim()
+    }
+    return $null
+}
+
 function Get-AgentServiceEnvironment {
     param(
         [Parameter(Mandatory = $true)]
@@ -167,7 +179,7 @@ function Get-AgentServiceEnvironment {
         TRINITY_SOCKS_USER       = $SocksUser
         TRINITY_SOCKS_PASSWORD   = $SocksPass
         CONTROLLER_URL           = $ControllerUrl
-        TRINITY_AGENT_KEY        = $AgentKey
+        TRINITY_ENROLLMENT_KEY   = $script:EnrollmentKey
     }
     if ($env:TRINITY_DEVICE_CLASS) {
         $envMap.TRINITY_DEVICE_CLASS = $env:TRINITY_DEVICE_CLASS
@@ -480,6 +492,7 @@ function Invoke-BootstrapRepoAndReenter {
     if ($env:TRINITY_LOG_LEVEL) { $env:TRINITY_LOG_LEVEL = $env:TRINITY_LOG_LEVEL.Trim() }
     elseif ($script:LogLevel) { $env:TRINITY_LOG_LEVEL = $script:LogLevel }
     if ($env:CONTROLLER_URL) { $env:CONTROLLER_URL = $env:CONTROLLER_URL.Trim() }
+    if ($env:TRINITY_ENROLLMENT_KEY) { $env:TRINITY_ENROLLMENT_KEY = $env:TRINITY_ENROLLMENT_KEY.Trim() }
     if ($env:TRINITY_AGENT_KEY) { $env:TRINITY_AGENT_KEY = $env:TRINITY_AGENT_KEY.Trim() }
     if ($env:TRINITY_SOCKS_PORT) {
         $sp = $env:TRINITY_SOCKS_PORT.Trim()
@@ -943,13 +956,14 @@ function Invoke-AgentInstallCore {
         $script:ControllerUrl = Read-Host "Enter your controller URL (example: https://api.example.com)"
     }
 
-    if (-not $AgentKey) {
+    $script:EnrollmentKey = Resolve-EnrollmentKey
+    if (-not $script:EnrollmentKey) {
         if ($nonInteractive) {
-            Write-Fail "TRINITY_AGENT_KEY is required when TRINITY_NONINTERACTIVE=1"
+            Write-Fail "TRINITY_ENROLLMENT_KEY (or deprecated TRINITY_AGENT_KEY) is required when TRINITY_NONINTERACTIVE=1"
             exit 1
         }
-        $secure = Read-Host "Enter your agent key (from the dashboard Deploy Agent page)" -AsSecureString
-        $script:AgentKey = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
+        $secure = Read-Host "Enter your enrollment key (from the dashboard Deploy Agent page)" -AsSecureString
+        $script:EnrollmentKey = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
             [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
         )
     }
