@@ -34,12 +34,13 @@ type Settings struct {
 	AgentKey            string `json:"-"`
 }
 
-// PublicView is returned by API handlers (agent key is never exposed).
+// PublicView is returned by API handlers (enrollment key is never exposed).
 type PublicView struct {
 	PublicDomain        string `json:"public_domain"`
 	ControllerPublicURL string `json:"controller_public_url"`
 	SSLMode             string `json:"ssl_mode"`
 	HasAgentKey         bool   `json:"has_agent_key"`
+	HasEnrollmentKey    bool   `json:"has_enrollment_key"`
 }
 
 type Store struct {
@@ -213,6 +214,7 @@ func (settings *Settings) toPublicView() *PublicView {
 		ControllerPublicURL: controllerURL,
 		SSLMode:             settings.SSLMode,
 		HasAgentKey:         settings.AgentKey != "",
+		HasEnrollmentKey:    settings.AgentKey != "",
 	}
 }
 

@@ -31,8 +31,8 @@ func TestBuildDeployCommands(t *testing.T) {
 	if linux.ControllerURL != commands.ProductionControllerURL {
 		t.Errorf("linux controller URL mismatch")
 	}
-	if !strings.Contains(linux.Command, "test-agent-key-hex") {
-		t.Errorf("linux command missing agent key")
+	if !strings.Contains(linux.Command, "TRINITY_ENROLLMENT_KEY=") || !strings.Contains(linux.Command, "test-agent-key-hex") {
+		t.Errorf("linux command missing enrollment key: %s", linux.Command)
 	}
 
 	macos := findPlatform(commands.Platforms, "macos")
@@ -114,8 +114,8 @@ func TestWindowsBootstrapOneLiner(t *testing.T) {
 
 func TestWindowsBootstrapOneLinerNoKey(t *testing.T) {
 	line := windowsBootstrapOneLiner("https://api.example.com", "", DefaultLogLevel)
-	if strings.Contains(line, "TRINITY_AGENT_KEY") {
-		t.Errorf("no-key one-liner should not set TRINITY_AGENT_KEY")
+	if strings.Contains(line, "TRINITY_ENROLLMENT_KEY") {
+		t.Errorf("no-key one-liner should not set TRINITY_ENROLLMENT_KEY")
 	}
 }
 

@@ -24,14 +24,21 @@ cd "$ROOT"
 # shellcheck source=scripts/lib/production-common.sh
 source "$ROOT/scripts/lib/production-common.sh"
 
-if [[ "${TRINITY_DEV:-}" == "1" ]]; then
+# Auto-detect local dev (same as reset-dashboard-admin.sh).
+DEV_MODE=0
+if [[ "${TRINITY_DEV:-}" == "1" ]] || [[ -f "$ROOT/.dev/dashboard.db" ]]; then
+	DEV_MODE=1
+fi
+
+if [[ "$DEV_MODE" == "1" ]]; then
 	DASHBOARD_DB="${DASHBOARD_DB_PATH:-$ROOT/.dev/dashboard.db}"
 	OUTPUT="${CONTROLLER_ENV_FILE:-$ROOT/.dev/.env.controller}"
+	ENV_SOURCE="${ENV_FILE:-$ROOT/.dev/dev.env}"
 else
 	DASHBOARD_DB="${DASHBOARD_DB_PATH:-./dashboard.db}"
 	OUTPUT="${CONTROLLER_ENV_FILE:-.env.controller}"
+	ENV_SOURCE="${ENV_FILE:-.env}"
 fi
-ENV_SOURCE="${ENV_FILE:-.env}"
 
 if [[ "$OUTPUT" == /etc/trinityproxy/controller.env ]] && [[ "$DASHBOARD_DB" == "./dashboard.db" ]] && [[ "${TRINITY_DEV:-}" != "1" ]]; then
 	DASHBOARD_DB="/var/lib/trinityproxy/dashboard.db"
@@ -91,26 +98,48 @@ SOURCE=""
 
 if read_key_from_dashboard_db "$DASHBOARD_DB"; then
 	SOURCE="dashboard DB ($DASHBOARD_DB)"
-elif [[ -n "${TRINITY_AGENT_KEY:-}" ]]; then
+elif [[ "$DEV_MODE" == "1" ]] && read_key_from_env_file "$ENV_SOURCE"; then
+	SOURCE="$ENV_SOURCE"
+elif [[ "$DEV_MODE" != "1" ]] && [[ -n "${TRINITY_AGENT_KEY:-}" ]]; then
 	KEY="$TRINITY_AGENT_KEY"
 	SOURCE="TRINITY_AGENT_KEY environment variable"
-elif read_key_from_env_file "$ENV_SOURCE"; then
+elif [[ "$DEV_MODE" != "1" ]] && read_key_from_env_file "$ENV_SOURCE"; then
 	SOURCE="$ENV_SOURCE"
+fi
+
+if [[ "$DEV_MODE" == "1" ]] && [[ -n "${TRINITY_AGENT_KEY:-}" ]] && [[ -n "$KEY" ]] && [[ "$TRINITY_AGENT_KEY" != "$KEY" ]]; then
+	echo "[!] WARNING: Ignoring shell TRINITY_AGENT_KEY (may be production)."
+	echo "    Dev uses key from $SOURCE"
 fi
 
 write_snippet() {
 	local key="$1"
 	local source_note="$2"
-	if [[ "$OUTPUT" == /etc/trinityproxy/controller.env ]]; then
+	if [[ "$OUTPUT" == /etc/trinityproxy/controller.env ]] || [[ "$DEV_MODE" == "1" && "$OUTPUT" == *"/.dev/.env.controller" ]]; then
 		local api_key controller_url api_port db_path
 		api_key="$(grep -E '^TRINITY_API_KEY=' "$OUTPUT" 2>/dev/null | tail -1 | cut -d= -f2- || true)"
 		controller_url="$(grep -E '^CONTROLLER_URL=' "$OUTPUT" 2>/dev/null | tail -1 | cut -d= -f2- || true)"
 		api_port="$(grep -E '^API_PORT=' "$OUTPUT" 2>/dev/null | tail -1 | cut -d= -f2- || echo "3100")"
-		db_path="$(grep -E '^DB_PATH=' "$OUTPUT" 2>/dev/null | tail -1 | cut -d= -f2- || echo "/var/lib/trinityproxy/trinityproxy.db")"
-		[[ -n "$api_key" ]] || api_key="$(production_random_hex)"
+		db_path="$(grep -E '^DB_PATH=' "$OUTPUT" 2>/dev/null | tail -1 | cut -d= -f2- || echo "${ROOT}/.dev/trinityproxy.db")"
+		[[ -n "$api_key" ]] || api_key="$(grep -E '^TRINITY_API_KEY=' "$ENV_SOURCE" 2>/dev/null | tail -1 | cut -d= -f2- || production_random_hex)"
 		[[ -n "$controller_url" ]] || controller_url="http://127.0.0.1:${api_port}"
+		if [[ "$DEV_MODE" == "1" ]]; then
+			cat >"$OUTPUT" <<EOF
+# TrinityProxy local dev controller env (isolated — NOT production)
+# Source: ${source_note}
+TRINITY_ENROLLMENT_KEY=${key}
+TRINITY_AGENT_KEY=${key}
+TRINITY_API_KEY=${api_key}
+API_PORT=${api_port}
+DB_PATH=${db_path}
+CONTROLLER_URL=${controller_url}
+EOF
+			chmod 600 "$OUTPUT" 2>/dev/null || true
+			return 0
+		fi
 		cat >"$OUTPUT" <<EOF
 TRINITY_API_KEY=${api_key}
+TRINITY_ENROLLMENT_KEY=${key}
 TRINITY_AGENT_KEY=${key}
 API_PORT=${api_port}
 DB_PATH=${db_path}
@@ -128,7 +157,8 @@ EOF
 #
 # Or add TRINITY_AGENT_KEY to scripts/trinityproxy-controller.service and restart:
 #   sudo systemctl restart trinityproxy-controller
-export TRINITY_AGENT_KEY=${key}
+export TRINITY_ENROLLMENT_KEY=${key}
+TRINITY_AGENT_KEY=${key}
 EOF
 }
 
@@ -155,7 +185,11 @@ EOF
 if [[ -n "$KEY" ]]; then
 	write_snippet "$KEY" "$SOURCE"
 	echo "[+] Wrote TRINITY_AGENT_KEY to $OUTPUT (from $SOURCE)"
-	echo "[*] Start controller: make run-controller  (auto-loads $OUTPUT)"
+	if [[ "$DEV_MODE" == "1" ]]; then
+		echo "[*] Dev controller uses $OUTPUT — restart with: make stop && make start-dev"
+	else
+		echo "[*] Start controller: make run-controller  (auto-loads $OUTPUT)"
+	fi
 	exit 0
 fi
 

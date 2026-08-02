@@ -196,7 +196,7 @@ func setCredentialPermissions() {
 func generateCredentials() (string, string, int) {
 	username := "u_" + GenerateRandomString(4)
 	password := GenerateRandomString(12)
-	port := getRandomPort()
+	port := resolveSOCKSPort()
 
 	os.WriteFile(usernamePath, []byte(username), 0600)
 	os.WriteFile(passwordPath, []byte(password), 0600)
@@ -206,6 +206,15 @@ func generateCredentials() (string, string, int) {
 	}
 
 	return username, password, port
+}
+
+func resolveSOCKSPort() int {
+	if v := strings.TrimSpace(os.Getenv("TRINITY_SOCKS_PORT")); v != "" {
+		if port, err := strconv.Atoi(v); err == nil && port > 0 && port <= 65535 {
+			return port
+		}
+	}
+	return getRandomPort()
 }
 
 func writeDanteConf(username, password string, port int) error {
@@ -363,7 +372,7 @@ func main() {
 		username, password, port = generateCredentials()
 	}
 
-	if *force || !fileExists(confPath) {
+	if *force || !danteConfValid() {
 		if err := writeDanteConf(username, password, port); err != nil {
 			logutil.Fatal(log, "failed to write danted.conf", "err", err)
 		}
@@ -391,4 +400,16 @@ func main() {
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// danteConfValid reports whether an existing danted.conf has the minimum fields
+// TrinityProxy needs. Debian's dante-server package ships a stub config that must
+// not be preserved.
+func danteConfValid() bool {
+	data, err := os.ReadFile(confPath)
+	if err != nil {
+		return false
+	}
+	content := string(data)
+	return strings.Contains(content, "internal:") && strings.Contains(content, "socksmethod:")
 }

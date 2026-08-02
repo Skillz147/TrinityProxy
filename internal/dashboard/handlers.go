@@ -48,12 +48,17 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/dashboard/stats", s.middleware.RequirePasswordChanged(s.handleStats))
 	mux.HandleFunc("GET /api/dashboard/nodes", s.middleware.RequirePasswordChanged(s.handleNodes))
 	mux.HandleFunc("DELETE /api/dashboard/nodes/{id}", s.middleware.RequirePasswordChanged(s.handleDeleteNode))
+	mux.HandleFunc("POST /api/dashboard/nodes/{id}/commands", s.middleware.RequirePasswordChanged(s.handleEnqueueNodeCommand))
 	mux.HandleFunc("GET /api/dashboard/nodes/{id}/credentials", s.middleware.RequirePasswordChanged(s.handleNodeCredentials))
+	mux.HandleFunc("GET /api/dashboard/nodes/{id}/token-status", s.middleware.RequirePasswordChanged(s.handleNodeTokenStatus))
+	mux.HandleFunc("POST /api/dashboard/nodes/{id}/regenerate-token", s.middleware.RequirePasswordChanged(s.handleRegenerateNodeToken))
+	mux.HandleFunc("POST /api/dashboard/nodes/{id}/revoke-token", s.middleware.RequirePasswordChanged(s.handleRevokeNodeToken))
 	mux.HandleFunc("GET /api/dashboard/bootstrap-script", s.middleware.RequirePasswordChanged(s.handleBootstrapScript))
 	mux.HandleFunc("GET /api/dashboard/deploy-commands", s.middleware.RequirePasswordChanged(s.handleDeployCommands))
 	mux.HandleFunc("GET /api/dashboard/deployment", s.middleware.RequirePasswordChanged(s.handleGetDeployment))
 	mux.HandleFunc("PUT /api/dashboard/deployment", s.middleware.RequirePasswordChanged(s.handlePutDeployment))
 	mux.HandleFunc("POST /api/dashboard/deployment/regenerate-agent-key", s.middleware.RequirePasswordChanged(s.handleRegenerateAgentKey))
+	mux.HandleFunc("POST /api/dashboard/deployment/regenerate-enrollment-key", s.middleware.RequirePasswordChanged(s.handleRegenerateAgentKey))
 	mux.HandleFunc("GET /api/dashboard/deployment/dns-hints", s.middleware.RequirePasswordChanged(s.handleDNSHints))
 	mux.HandleFunc("GET /api/dashboard/deployment/dev-setup", s.middleware.RequirePasswordChanged(s.handleDevSetup))
 }
@@ -194,7 +199,7 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"nodes": api.ToPublicSlice(nodes),
+		"nodes": enrichNodesWithCommands(nodes, s.commandsStore()),
 		"count": len(nodes),
 	})
 }
@@ -272,7 +277,7 @@ func (s *Server) handleBootstrapScript(w http.ResponseWriter, r *http.Request) {
 	}
 
 	script := fmt.Sprintf(
-		`curl -fsSL https://raw.githubusercontent.com/Skillz147/TrinityProxy/main/scripts/install-agent-service.sh | CONTROLLER_URL=%q TRINITY_AGENT_KEY=%q TRINITY_NONINTERACTIVE=1 bash`,
+		`curl -fsSL https://raw.githubusercontent.com/Skillz147/TrinityProxy/main/scripts/install-agent-service.sh | CONTROLLER_URL=%q TRINITY_ENROLLMENT_KEY=%q TRINITY_NONINTERACTIVE=1 bash`,
 		controllerURL,
 		agentKey,
 	)
@@ -357,7 +362,7 @@ func (s *Server) handleRegenerateAgentKey(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":        "agent_key_regenerated",
 		"has_agent_key": view.HasAgentKey,
-		"message":       "Agent key rotated. Update TRINITY_AGENT_KEY on the controller and re-copy the bootstrap script for new agents.",
+		"message":       "Enrollment key rotated. Update TRINITY_ENROLLMENT_KEY on the controller (make sync-agent-key) and re-copy install commands for new agents. Existing enrolled agents keep their per-node tokens.",
 	})
 }
 

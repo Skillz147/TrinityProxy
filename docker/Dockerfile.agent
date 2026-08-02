@@ -12,6 +12,7 @@ FROM debian:bookworm-slim
 
 RUN apt-get update \
 	&& apt-get install -y --no-install-recommends dante-server ca-certificates \
+	&& rm -f /etc/danted.conf \
 	&& rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

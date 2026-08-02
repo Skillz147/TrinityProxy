@@ -134,7 +134,7 @@ if command -v sqlite3 >/dev/null 2>&1 && [[ -f "$DASHBOARD_DB" ]]; then
 	key="${key//$'\r'/}"
 	key="${key//$'\n'/}"
 	if [[ -n "$key" ]]; then
-		DASHBOARD_DB_PATH="$DASHBOARD_DB" CONTROLLER_ENV_FILE="$DEV_CONTROLLER_ENV" \
+		TRINITY_DEV=1 DASHBOARD_DB_PATH="$DASHBOARD_DB" CONTROLLER_ENV_FILE="$DEV_CONTROLLER_ENV" \
 			./scripts/sync-agent-key.sh >/dev/null 2>&1 || true
 	fi
 fi

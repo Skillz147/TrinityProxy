@@ -1,7 +1,19 @@
 import { useCallback, useEffect, useMemo, useState, type MouseEvent } from "react";
-import { Eye, Link2, Server, Trash2 } from "lucide-react";
+import {
+  Eye,
+  KeyRound,
+  Link2,
+  RefreshCw,
+  Server,
+  Settings,
+  Terminal,
+  Trash2,
+  Wrench,
+} from "lucide-react";
+import { AgentRemoteActionDialog } from "@/components/AgentRemoteActionDialog";
 import { EmptyState } from "@/components/EmptyState";
 import { ErrorState } from "@/components/ErrorState";
+import { RemoteCommandBadge } from "@/components/RemoteCommandBadge";
 import { RemoveAgentDialog } from "@/components/RemoveAgentDialog";
 import { SocksCredentialsDialog } from "@/components/SocksCredentialsDialog";
 import {
@@ -18,7 +30,10 @@ import {
   ApiError,
   fetchDashboardNodes,
   fetchNodeCredentials,
+  regenerateNodeToken,
+  revokeNodeToken,
   type ProxyNode,
+  type RemoteCommandAction,
 } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { getPageHeader } from "@/components/layout/Sidebar";
@@ -97,12 +112,14 @@ function AgentContextMenu({
   onClose,
   onViewCredentials,
   onRemove,
+  onRemoteAction,
 }: {
   menu: ContextMenuState;
   token: string | null;
   onClose: () => void;
   onViewCredentials: (node: ProxyNode) => void;
   onRemove: (node: ProxyNode) => void;
+  onRemoteAction: (node: ProxyNode, action: RemoteCommandAction) => void;
 }) {
   const [isLoading, setIsLoading] = useState(false);
 
@@ -126,9 +143,53 @@ function AgentContextMenu({
     }
   };
 
+  const handleRegenerateToken = async () => {
+    setIsLoading(true);
+    try {
+      const result = await regenerateNodeToken(token, menu.node.id);
+      await copyText(result.node_token, "New node token copied — save it on the agent");
+      toast.success(result.message);
+      onClose();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Failed to regenerate node token");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleRevokeToken = async () => {
+    setIsLoading(true);
+    try {
+      const result = await revokeNodeToken(token, menu.node.id);
+      toast.success(result.message);
+      onClose();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Failed to revoke node token");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const remoteItems: {
+    action: RemoteCommandAction;
+    label: string;
+    icon: typeof Terminal;
+    destructive?: boolean;
+  }[] = [
+    { action: "status", label: "Check status", icon: Terminal },
+    { action: "restart", label: "Restart agent", icon: RefreshCw },
+    { action: "repair", label: "Repair / reinstall", icon: Wrench },
+    {
+      action: "uninstall",
+      label: "Uninstall agent remotely",
+      icon: Settings,
+      destructive: true,
+    },
+  ];
+
   return (
     <div
-      className="fixed z-50 min-w-[220px] overflow-hidden rounded-md border border-border bg-card p-1 text-card-foreground shadow-md"
+      className="fixed z-50 min-w-[240px] overflow-hidden rounded-md border border-border bg-card p-1 text-card-foreground shadow-md"
       style={{ left: menu.x, top: menu.y }}
       role="menu"
       onMouseDown={(event) => event.stopPropagation()}
@@ -152,6 +213,56 @@ function AgentContextMenu({
         <Link2 className="h-4 w-4 shrink-0" />
         Copy connection string
       </button>
+
+      <div className="my-1 h-px bg-border" role="separator" />
+
+      <button
+        type="button"
+        role="menuitem"
+        disabled={isLoading}
+        className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
+        onClick={() => void handleRegenerateToken()}
+      >
+        <KeyRound className="h-4 w-4 shrink-0" />
+        {menu.node.has_node_token ? "Regenerate node token" : "Issue node token"}
+      </button>
+      {menu.node.has_node_token && (
+        <button
+          type="button"
+          role="menuitem"
+          disabled={isLoading}
+          className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-destructive hover:bg-destructive/10 disabled:opacity-50"
+          onClick={() => void handleRevokeToken()}
+        >
+          <KeyRound className="h-4 w-4 shrink-0" />
+          Revoke node token
+        </button>
+      )}
+
+      <div className="my-1 h-px bg-border" role="separator" />
+
+      {remoteItems.map((item) => (
+        <button
+          key={item.action}
+          type="button"
+          role="menuitem"
+          className={`flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground ${
+            item.destructive
+              ? "text-destructive hover:bg-destructive/10"
+              : "text-foreground"
+          }`}
+          onClick={() => {
+            onRemoteAction(menu.node, item.action);
+            onClose();
+          }}
+        >
+          <item.icon className="h-4 w-4 shrink-0" />
+          {item.label}
+        </button>
+      ))}
+
+      <div className="my-1 h-px bg-border" role="separator" />
+
       <button
         type="button"
         role="menuitem"
@@ -162,7 +273,7 @@ function AgentContextMenu({
         }}
       >
         <Trash2 className="h-4 w-4 shrink-0" />
-        Remove agent
+        Remove from dashboard
       </button>
     </div>
   );
@@ -197,6 +308,9 @@ function AgentTableRow({
       </td>
       <td className="whitespace-nowrap px-4 py-3">
         <HealthBadge healthy={node.is_healthy} />
+      </td>
+      <td className="whitespace-nowrap px-4 py-3">
+        <RemoteCommandBadge command={node.remote_command} />
       </td>
       <td className="whitespace-nowrap px-4 py-3 text-sm text-muted-foreground">
         {formatLastSeen(node.last_seen)}
@@ -235,6 +349,7 @@ function AgentCard({
       <div className="mt-3 flex flex-wrap gap-2">
         <PlatformBadge platform={node.platform} />
         <TypeBadge node={node} />
+        <RemoteCommandBadge command={node.remote_command} compact />
       </div>
       <dl className="mt-4 grid grid-cols-2 gap-2 text-xs">
         <div>
@@ -264,6 +379,10 @@ export function AgentsPage() {
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [credentialsNode, setCredentialsNode] = useState<ProxyNode | null>(null);
   const [removeNode, setRemoveNode] = useState<ProxyNode | null>(null);
+  const [remoteAction, setRemoteAction] = useState<{
+    node: ProxyNode;
+    action: RemoteCommandAction;
+  } | null>(null);
 
   const countries = useMemo(() => {
     const values = new Set<string>();
@@ -432,6 +551,7 @@ export function AgentsPage() {
                       "Type",
                       "Status",
                       "Health",
+                      "Command",
                       "Last seen",
                     ].map((heading) => (
                       <th
@@ -475,8 +595,17 @@ export function AgentsPage() {
           onClose={() => setContextMenu(null)}
           onViewCredentials={setCredentialsNode}
           onRemove={setRemoveNode}
+          onRemoteAction={(node, action) => setRemoteAction({ node, action })}
         />
       )}
+
+      <AgentRemoteActionDialog
+        node={remoteAction?.node ?? null}
+        action={remoteAction?.action ?? null}
+        token={token}
+        onClose={() => setRemoteAction(null)}
+        onQueued={() => void loadNodes()}
+      />
 
       <SocksCredentialsDialog
         node={credentialsNode}

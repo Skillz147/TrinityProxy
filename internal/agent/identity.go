@@ -124,6 +124,8 @@ type httpGetter interface {
 
 var geoHTTPClient httpGetter = http.DefaultClient
 
+var geoServicesForIP = defaultGeoServices
+
 func defaultGeoServices(ip string) []geoService {
 	return []geoService{
 		{"ipapi.co", "https://ipapi.co/" + ip + "/json/"},
@@ -134,13 +136,14 @@ func defaultGeoServices(ip string) []geoService {
 
 // getGeoInfo gets location data for an IP with multiple fallback services.
 func getGeoInfo(ip string) (map[string]string, error) {
-	return fetchGeoInfo(defaultGeoServices(ip), geoHTTPClient)
+	return fetchGeoInfo(geoServicesForIP(ip), geoHTTPClient)
 }
 
 func fetchGeoInfo(services []geoService, client httpGetter) (map[string]string, error) {
+	log := logutil.Component("agent")
 	var lastError error
 	for _, service := range services {
-		fmt.Printf("[*] Trying geo service: %s\n", service.name)
+		log.Debug("trying geo service", "service", service.name)
 
 		resp, err := client.Get(service.url)
 		if err != nil {
@@ -156,7 +159,7 @@ func fetchGeoInfo(services []geoService, client httpGetter) (map[string]string, 
 		}
 
 		if result["country_name"] != "" || result["country"] != "" || result["country_code"] != "" {
-			fmt.Printf("[+] Geo data retrieved from %s\n", service.name)
+			log.Info("geo data retrieved", "service", service.name)
 			return result, nil
 		}
 
@@ -225,7 +228,7 @@ func GatherMetadata() (*NodeMetadata, error) {
 		return nil, err
 	}
 
-	geoData, err := getGeoInfo(ip)
+	geoData, err := getCachedGeoInfo(ip)
 	if err != nil {
 		logutil.Component("agent").Warn("geo lookup failed, continuing with unknown location", "err", err)
 		geoData = map[string]string{}

@@ -35,6 +35,7 @@ type DeployPlatform struct {
 // DeployCommands is the API payload for platform-specific install commands.
 type DeployCommands struct {
 	HasAgentKey             bool             `json:"has_agent_key"`
+	HasEnrollmentKey        bool             `json:"has_enrollment_key"`
 	SSLMode                 string           `json:"ssl_mode"`
 	PublicDomain            string           `json:"public_domain"`
 	ProductionControllerURL string           `json:"production_controller_url"`
@@ -43,61 +44,54 @@ type DeployCommands struct {
 }
 
 // BuildDeployCommands generates install commands for each supported platform.
-func BuildDeployCommands(settings *Settings, envFallback, agentKey, logLevel string) DeployCommands {
+func BuildDeployCommands(settings *Settings, envFallback, enrollmentKey, logLevel string) DeployCommands {
 	logLevel = NormalizeLogLevel(logLevel)
 	productionURL := resolveProductionControllerURL(settings, envFallback)
 	localURL := localControllerURL
 
-	hasKey := agentKey != ""
+	hasKey := enrollmentKey != ""
 
 	platforms := []DeployPlatform{
 		withOperations(DeployPlatform{
 			ID:            "linux-vps",
 			Label:         "Linux VPS",
-			Description:   "Production agent on a fresh Linux server. Installs systemd service, Dante SOCKS proxy, and registers with your controller.",
+			Description:   "Production VPS — run as root.",
 			ControllerURL: productionURL,
-			Command:       linuxVPSCommand(productionURL, agentKey, logLevel),
-			RunAs:         "root",
-			Prerequisites: "Ubuntu/Debian VPS with curl installed.",
-		}, linuxVPSOperations(productionURL, agentKey, logLevel)),
+			Command:       linuxVPSCommand(productionURL, enrollmentKey, logLevel),
+		}, linuxVPSOperations(productionURL, enrollmentKey, logLevel)),
 		withOperations(DeployPlatform{
 			ID:            "macos",
 			Label:         "macOS",
-			Description:   "Install as a launchd service on your Mac with embedded SOCKS5 proxy (Go-based, no Dante).",
+			Description:   "launchd service from repo.",
 			ControllerURL: localURL,
-			Command:       macOSCommand(localURL, agentKey, logLevel),
-			RunAs:         "your Mac user",
-			Prerequisites: "Run from the TrinityProxy repo after make build. Uses make install-agent-macos or the shell script directly.",
-		}, macOSOperations(localURL, agentKey, logLevel)),
+			Command:       macOSCommand(localURL, enrollmentKey, logLevel),
+		}, macOSOperations(localURL, enrollmentKey, logLevel)),
 		withOperations(DeployPlatform{
 			ID:            "windows",
 			Label:         "Windows",
-			Description:   "One paste in elevated PowerShell: downloads the installer and pre-built trinityproxy-windows-amd64.exe from GitHub Releases (no Go on your PC). Falls back to a fresh source zip only if the release is not published yet.",
+			Description:   "Elevated PowerShell — no Go required.",
 			ControllerURL: productionURL,
-			Command:       windowsCommand(productionURL, agentKey, logLevel),
-			RunAs:         "Administrator (elevated PowerShell)",
-			Prerequisites: "Elevated PowerShell only — no Git or Go required once GitHub Release latest is published. Optional: TRINITY_LOCAL_BINARY or TRINITY_DOWNLOAD_URL to use your own binary.",
-		}, windowsOperations(productionURL, agentKey, logLevel)),
+			Command:       windowsCommand(productionURL, enrollmentKey, logLevel),
+		}, windowsOperations(productionURL, enrollmentKey, logLevel)),
 		withOperations(DeployPlatform{
 			ID:            "docker",
 			Label:         "Docker (Mac dev)",
-			Description:   "Run a Linux agent container on your Mac to simulate a VPS. Heartbeats reach the controller on your host.",
+			Description:   "Linux agent container on your Mac.",
 			ControllerURL: dockerControllerURL,
 			Command:       dockerDevCommand(),
-			Prerequisites: "Docker Desktop installed. Run make start-dev (or make sync-agent-key) with controller running locally.",
 		}, dockerOperations()),
 		withOperations(DeployPlatform{
 			ID:            "mac-dev",
 			Label:         "Local dev (Mac)",
-			Description:   "Foreground dev agent with embedded SOCKS on :1080 — no install, no Dante. Ideal while developing on macOS.",
+			Description:   "Foreground dev agent on :1080.",
 			ControllerURL: localURL,
 			Command:       macDevCommand(),
-			Prerequisites: "Run make start-dev in another terminal, then make sync-agent-key if needed.",
 		}, macDevOperations()),
 	}
 
 	return DeployCommands{
 		HasAgentKey:             hasKey,
+		HasEnrollmentKey:        hasKey,
 		SSLMode:                 settings.SSLMode,
 		PublicDomain:            settings.PublicDomain,
 		ProductionControllerURL: productionURL,
@@ -116,19 +110,19 @@ func resolveProductionControllerURL(settings *Settings, envFallback string) stri
 	return strings.TrimRight(strings.TrimSpace(envFallback), "/")
 }
 
-func linuxVPSCommand(controllerURL, agentKey, logLevel string) string {
-	if agentKey == "" {
+func linuxVPSCommand(controllerURL, enrollmentKey, logLevel string) string {
+	if enrollmentKey == "" {
 		return fmt.Sprintf(
-			`# Save Settings first to generate an agent key, then refresh this page.
+			`# Save Settings first to generate an enrollment key, then refresh this page.
 curl -fsSL https://raw.githubusercontent.com/Skillz147/TrinityProxy/main/scripts/install-agent-service.sh | CONTROLLER_URL=%q TRINITY_LOG_LEVEL=%s TRINITY_NONINTERACTIVE=1 bash`,
 			controllerURL,
 			logLevel,
 		)
 	}
 	return fmt.Sprintf(
-		`curl -fsSL https://raw.githubusercontent.com/Skillz147/TrinityProxy/main/scripts/install-agent-service.sh | CONTROLLER_URL=%q TRINITY_AGENT_KEY=%q TRINITY_LOG_LEVEL=%s TRINITY_NONINTERACTIVE=1 bash`,
+		`curl -fsSL https://raw.githubusercontent.com/Skillz147/TrinityProxy/main/scripts/install-agent-service.sh | CONTROLLER_URL=%q TRINITY_ENROLLMENT_KEY=%q TRINITY_LOG_LEVEL=%s TRINITY_NONINTERACTIVE=1 bash`,
 		controllerURL,
-		agentKey,
+		enrollmentKey,
 		logLevel,
 	)
 }
@@ -137,19 +131,19 @@ func psSingleQuoted(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }
 
-func windowsBootstrapOneLiner(controllerURL, agentKey, logLevel string) string {
+func windowsBootstrapOneLiner(controllerURL, enrollmentKey, logLevel string) string {
 	scriptURL := psSingleQuoted(githubRawInstallScript)
 	ctrl := psSingleQuoted(controllerURL)
 	inner := fmt.Sprintf("$env:CONTROLLER_URL=%s; $env:TRINITY_NONINTERACTIVE='1'; $env:TRINITY_LOG_LEVEL=%s", ctrl, psSingleQuoted(logLevel))
-	if agentKey != "" {
-		inner += fmt.Sprintf("; $env:TRINITY_AGENT_KEY=%s", psSingleQuoted(agentKey))
+	if enrollmentKey != "" {
+		inner += fmt.Sprintf("; $env:TRINITY_ENROLLMENT_KEY=%s", psSingleQuoted(enrollmentKey))
 	}
 	inner += fmt.Sprintf("; $s=Join-Path $env:TEMP 'tp-install.ps1'; iwr -UseBasicParsing -Uri %s -OutFile $s; & $s", scriptURL)
 	return "& { " + inner + " }"
 }
 
-func macOSCommand(controllerURL, agentKey, logLevel string) string {
-	if agentKey == "" {
+func macOSCommand(controllerURL, enrollmentKey, logLevel string) string {
+	if enrollmentKey == "" {
 		return fmt.Sprintf(`# Save Settings first, then run:
 make sync-agent-key
 make install-agent-macos
@@ -161,13 +155,13 @@ CONTROLLER_URL=%q TRINITY_LOG_LEVEL=%s ./scripts/install-agent-macos.sh`, contro
 make install-agent-macos
 
 # Or run the script directly (after make build):
-CONTROLLER_URL=%q TRINITY_AGENT_KEY=%q TRINITY_LOG_LEVEL=%s ./scripts/install-agent-macos.sh`, controllerURL, agentKey, logLevel)
+CONTROLLER_URL=%q TRINITY_ENROLLMENT_KEY=%q TRINITY_LOG_LEVEL=%s ./scripts/install-agent-macos.sh`, controllerURL, enrollmentKey, logLevel)
 }
 
-func windowsCommand(controllerURL, agentKey, logLevel string) string {
-	line := windowsBootstrapOneLiner(controllerURL, agentKey, logLevel)
-	if agentKey == "" {
-		return fmt.Sprintf(`# Save Settings first to generate an agent key, then refresh this page.
+func windowsCommand(controllerURL, enrollmentKey, logLevel string) string {
+	line := windowsBootstrapOneLiner(controllerURL, enrollmentKey, logLevel)
+	if enrollmentKey == "" {
+		return fmt.Sprintf(`# Save Settings first to generate an enrollment key, then refresh this page.
 # Paste into elevated PowerShell (Run as administrator):
 %s`, line)
 	}
@@ -178,8 +172,9 @@ func windowsCommand(controllerURL, agentKey, logLevel string) string {
 func dockerDevCommand() string {
 	return `make start-dev    # controller on :3100 (another terminal)
 make sync-agent-key
-make docker-agent
+make docker-agent-dev   # alias: make docker-agent
 
+# Do not run ./docker/agent-entrypoint.sh on macOS — use Docker only.
 # Logs:  docker logs -f trinityproxy-agent-dev
 # Stop:  make docker-agent-down`
 }
@@ -194,8 +189,8 @@ func withOperations(p DeployPlatform, ops []RemoteCommand) DeployPlatform {
 	return p
 }
 
-func linuxVPSOperations(controllerURL, agentKey, logLevel string) []RemoteCommand {
-	install := linuxVPSCommand(controllerURL, agentKey, logLevel)
+func linuxVPSOperations(controllerURL, enrollmentKey, logLevel string) []RemoteCommand {
+	install := linuxVPSCommand(controllerURL, enrollmentKey, logLevel)
 	return []RemoteCommand{
 		{
 			ID:          "install",
@@ -238,8 +233,8 @@ fi`,
 	}
 }
 
-func macOSOperations(controllerURL, agentKey, logLevel string) []RemoteCommand {
-	install := macOSCommand(controllerURL, agentKey, logLevel)
+func macOSOperations(controllerURL, enrollmentKey, logLevel string) []RemoteCommand {
+	install := macOSCommand(controllerURL, enrollmentKey, logLevel)
 	return []RemoteCommand{
 		{
 			ID:          "install",
@@ -279,11 +274,11 @@ func windowsStatusOneLiner() string {
 	return "& { $sn='TrinityProxyAgent'; $dir=Join-Path $env:ProgramFiles 'TrinityProxy'; Write-Host '=== TrinityProxy Agent Status ==='; $svc=Get-Service -Name $sn -EA SilentlyContinue; if($svc){Write-Host ('Service: ' + $svc.Status)}else{$t=Get-ScheduledTask -TaskName $sn -EA SilentlyContinue; if($t){Write-Host ('Scheduled task: ' + $t.State)}else{Write-Host 'Service: NOT INSTALLED'}}; $portFile=Join-Path $dir 'trinityproxy-port'; if(Test-Path $portFile){$port=(Get-Content $portFile -Raw).Trim(); Write-Host ('SOCKS port (config): ' + $port); $conn=Get-NetTCPConnection -LocalPort ([int]$port) -State Listen -EA SilentlyContinue; if($conn){Write-Host ('Port ' + $port + ': LISTENING')}else{Write-Host ('Port ' + $port + ': NOT LISTENING')}}else{Write-Host 'Install dir / port file not found'}; if(Test-Path $dir){Write-Host ('Install dir: ' + $dir + ' (exists)')}else{Write-Host ('Install dir: ' + $dir + ' (missing)')} }"
 }
 
-func windowsOperations(controllerURL, agentKey, logLevel string) []RemoteCommand {
-	installLine := windowsBootstrapOneLiner(controllerURL, agentKey, logLevel)
+func windowsOperations(controllerURL, enrollmentKey, logLevel string) []RemoteCommand {
+	installLine := windowsBootstrapOneLiner(controllerURL, enrollmentKey, logLevel)
 	install := fmt.Sprintf("# Paste into elevated PowerShell (Run as administrator):\n%s", installLine)
 	repair := install
-	if agentKey == "" {
+	if enrollmentKey == "" {
 		install = fmt.Sprintf(`# Save Settings first to generate an agent key, then refresh this page.
 # Paste into elevated PowerShell (Run as administrator):
 %s`, installLine)

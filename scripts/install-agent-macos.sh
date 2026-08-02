@@ -109,7 +109,7 @@ if [[ -z "$CONTROLLER_URL" ]]; then
 	fail "CONTROLLER_URL is required (e.g. CONTROLLER_URL=http://127.0.0.1:3100 $0)"
 fi
 
-TRINITY_AGENT_KEY="${TRINITY_AGENT_KEY:-}"
+TRINITY_ENROLLMENT_KEY="${TRINITY_ENROLLMENT_KEY:-${TRINITY_AGENT_KEY:-}}"
 TRINITY_DEVICE_CLASS="${TRINITY_DEVICE_CLASS:-desktop}"
 TRINITY_SOCKS_PORT="${TRINITY_SOCKS_PORT:-1080}"
 
@@ -118,8 +118,8 @@ log_info "Controller: $CONTROLLER_URL"
 log_info "Device class: $TRINITY_DEVICE_CLASS"
 log_info "Embedded SOCKS port: $TRINITY_SOCKS_PORT"
 log_debug "Binary=$BINARY plist=$PLIST_PATH log_level=$TRINITY_LOG_LEVEL"
-if [[ -z "$TRINITY_AGENT_KEY" ]]; then
-	log_warn "TRINITY_AGENT_KEY unset — heartbeats will be unauthenticated (dev mode)"
+if [[ -z "$TRINITY_ENROLLMENT_KEY" ]]; then
+	log_warn "TRINITY_ENROLLMENT_KEY unset — heartbeats will be unauthenticated (dev mode)"
 fi
 
 mkdir -p "$LOG_DIR" "$HOME/Library/LaunchAgents"
@@ -151,8 +151,8 @@ append_env "CONTROLLER_URL" "$CONTROLLER_URL"
 append_env "TRINITY_DEVICE_CLASS" "$TRINITY_DEVICE_CLASS"
 append_env "TRINITY_SOCKS_PORT" "$TRINITY_SOCKS_PORT"
 append_env "TRINITY_ROOT" "$PROJECT_ROOT"
-if [[ -n "$TRINITY_AGENT_KEY" ]]; then
-	append_env "TRINITY_AGENT_KEY" "$TRINITY_AGENT_KEY"
+if [[ -n "$TRINITY_ENROLLMENT_KEY" ]]; then
+	append_env "TRINITY_ENROLLMENT_KEY" "$TRINITY_ENROLLMENT_KEY"
 fi
 
 cat > "$PLIST_PATH" <<EOF

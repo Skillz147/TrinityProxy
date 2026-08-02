@@ -1,7 +1,7 @@
 # TrinityProxy Makefile
 # Easy build and deployment for SOCKS5 proxy network
 
-.PHONY: help build build-main build-dashboard build-dashboard-ui build-windows-agent build-darwin-agent build-linux-amd64 build-linux-arm64 install-agent-macos clean install deps test run-controller start-controller run-agent run-agent-dev docker-agent test-agent-docker docker-agent-down setup-dev check-deps format lint setup-system vps-setup setup-api-controller quickstart debug cleanup install-service install-dashboard-service install-production start-service stop-service start start-dev stop stop-production uninstall-production uninstall dashboard dashboard-dev dashboard-init dashboard-run dashboard-up run-dashboard sync-agent-key sync-deployment-settings setup-domain reset-dashboard-admin reset-dashboard-admin-dev fix-dev-permissions
+.PHONY: help build build-main build-dashboard build-dashboard-ui build-windows-agent build-darwin-agent build-linux-amd64 build-linux-arm64 install-agent-macos clean install deps test run-controller start-controller run-agent run-agent-dev docker-agent docker-agent-dev test-agent-docker docker-agent-down setup-dev check-deps format lint setup-system vps-setup setup-api-controller quickstart debug cleanup install-service install-dashboard-service install-production start-service stop-service start start-dev stop stop-production uninstall-production uninstall dashboard dashboard-dev dashboard-init dashboard-run dashboard-up run-dashboard sync-agent-key sync-agent-key-dev sync-deployment-settings setup-domain reset-dashboard-admin reset-dashboard-admin-dev fix-dev-permissions
 
 # Catch accidental "make run dashboard" (space) — the target is run-dashboard (hyphen).
 ifneq (,$(filter dashboard,$(MAKECMDGOALS)))
@@ -36,6 +36,8 @@ help:
 	@echo "  make reset-dashboard-admin-dev - Reset admin login in .dev/dashboard.db (no sudo)"
 	@echo "  make fix-dev-permissions  - Fix root-owned web/dashboard/dist after sudo make start"
 	@echo "  make run-agent-dev  - macOS/local dev agent (embedded SOCKS :1080, foreground)"
+	@echo "  make docker-agent-dev - Linux agent in Docker → host controller :3100"
+	@echo "  make sync-agent-key-dev - Sync agent key from .dev/dashboard.db → .dev/.env.controller"
 	@echo "  make build          - Build all binaries"
 
 # Variables
@@ -350,19 +352,35 @@ docker-agent test-agent-docker:
 		echo "[!] Docker not found. Install Docker Desktop for Mac: https://www.docker.com/products/docker-desktop/"; \
 		exit 1; \
 	fi
-	@if [ ! -f .env.controller ]; then \
-		echo "[!] No .env.controller — run 'make start-dev' (syncs key automatically) or 'make sync-agent-key'"; \
+	@bash -c 'set -e; \
+	if [ -f .dev/.env.controller ]; then \
+		echo "[*] Using dev controller env (.dev/.env.controller)"; \
+		set -a; . scripts/lib/dev-env.sh; dev_env_apply; \
+		if [ -f "$$DEV_CONTROLLER_ENV" ]; then . "$$DEV_CONTROLLER_ENV"; fi; \
+		set +a; \
+	elif [ -f .env.controller ]; then \
+		echo "[*] Using production controller env (.env.controller)"; \
+		set -a; . ./.env.controller; set +a; \
+	else \
+		echo "[!] No .dev/.env.controller — run '\''make start-dev'\'' first, then '\''make sync-agent-key-dev'\''"; \
 		exit 1; \
-	fi
-	@echo "[*] Building and starting Linux agent container..."
-	@set -a; . ./.env.controller; set +a; \
-	export CONTROLLER_URL="$${CONTROLLER_URL:-http://host.docker.internal:3100}"; \
-	$(DOCKER_COMPOSE_DEV) up -d --build
+	fi; \
+	if [ -z "$$TRINITY_AGENT_KEY" ]; then \
+		echo "[!] TRINITY_AGENT_KEY is empty — run '\''make start-dev'\'' or '\''make sync-agent-key-dev'\''"; \
+		exit 1; \
+	fi; \
+	echo "[*] Building and starting Linux agent container..."; \
+	export CONTROLLER_URL="http://host.docker.internal:3100"; \
+	$(DOCKER_COMPOSE_DEV) up -d --build'
 	@echo ""
 	@echo "Agent container started — check dashboard Agents page in ~60s"
 	@echo ""
 	@echo "  Logs:    docker logs -f trinityproxy-agent-dev"
 	@echo "  Stop:    make docker-agent-down"
+
+
+# Alias for discoverability (same as docker-agent)
+docker-agent-dev: docker-agent
 
 docker-agent-down:
 	@if command -v docker >/dev/null 2>&1; then \
@@ -442,10 +460,19 @@ run-dashboard dashboard-run: build-dashboard
 	fi
 	@export PATH="/usr/local/go/bin:$$PATH"; DASHBOARD_PORT=8081 ./$(DASHBOARD_BINARY)
 
-# Sync TRINITY_AGENT_KEY from dashboard.db into .env.controller for the controller API
+# Sync TRINITY_AGENT_KEY from dashboard.db into controller env for the controller API
 sync-agent-key:
 	@chmod +x scripts/sync-agent-key.sh
-	@./scripts/sync-agent-key.sh
+	@if [ -f .dev/dashboard.db ]; then \
+		TRINITY_DEV=1 ./scripts/sync-agent-key.sh; \
+	else \
+		./scripts/sync-agent-key.sh; \
+	fi
+
+# Explicit dev sync — always reads .dev/dashboard.db → .dev/.env.controller
+sync-agent-key-dev:
+	@chmod +x scripts/sync-agent-key.sh
+	@TRINITY_DEV=1 ./scripts/sync-agent-key.sh
 
 sync-deployment-settings:
 	@chmod +x scripts/sync-deployment-settings.sh

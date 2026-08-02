@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
-  Info,
   KeyRound,
   RefreshCw,
   Settings2,
@@ -117,22 +116,6 @@ export function SettingsPage() {
 
       {!isLoading && (
         <>
-          {!publicDomain.trim() && (
-            <div className="flex items-start gap-3 rounded-lg border border-primary/30 bg-primary/5 p-4">
-              <Info className="mt-0.5 h-5 w-5 shrink-0 text-primary" aria-hidden="true" />
-              <div className="space-y-1 text-sm">
-                <p className="font-medium">Welcome — set up your deployment</p>
-                <p className="text-muted-foreground">
-                  Enter your domain below and click <strong>Save</strong>. Then go to{" "}
-                  <Link to="/deploy" className="text-primary underline-offset-2 hover:underline">
-                    Deploy Agent
-                  </Link>{" "}
-                  for your install command.
-                </p>
-              </div>
-            </div>
-          )}
-
           <div className="flex flex-col gap-6 w-full">
             <Card className="w-full">
               <CardHeader className="flex flex-row items-center justify-between gap-4 border-b border-border/40 pb-4">
@@ -218,7 +201,7 @@ export function SettingsPage() {
                     disabled={isRotating}
                   >
                     <RefreshCw className="h-4 w-4" />
-                    {isRotating ? "Generating…" : "Generate new key"}
+                    {isRotating ? "Generating…" : "Generate enrollment key"}
                   </Button>
                 </div>
 
@@ -229,7 +212,7 @@ export function SettingsPage() {
                     <Link to="/deploy" className="text-primary underline-offset-2 hover:underline">
                       Deploy Agent
                     </Link>
-                    .
+                    . Install scripts use the enrollment key; each agent receives a unique node token on first heartbeat.
                   </p>
                 )}
               </CardContent>

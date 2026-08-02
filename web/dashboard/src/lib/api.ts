@@ -48,10 +48,34 @@ export interface ProxyNode {
   network_type?: AgentNetworkType | string;
   is_online: boolean;
   is_healthy: boolean;
+  has_node_token?: boolean;
   last_seen: string;
   created_at: string;
   updated_at: string;
   last_probe_at?: string;
+  remote_command?: AgentRemoteCommand | null;
+}
+
+export type RemoteCommandAction = "uninstall" | "restart" | "status" | "repair";
+
+export interface AgentRemoteCommand {
+  id: string;
+  action: RemoteCommandAction | string;
+  status: "pending" | "running" | "success" | "failure" | string;
+  result?: string;
+  created_at?: string;
+  updated_at?: string;
+  completed_at?: string | null;
+}
+
+export interface EnqueueCommandRequest {
+  action: RemoteCommandAction;
+  log_level?: DeployLogLevel;
+}
+
+export interface EnqueueCommandResponse {
+  status: string;
+  command: AgentRemoteCommand & { node_id?: string; params?: Record<string, string> };
 }
 
 export interface NodesResponse {
@@ -259,6 +283,17 @@ export function deleteDashboardNode(
   });
 }
 
+export function enqueueNodeCommand(
+  token: string | null,
+  nodeId: string,
+  payload: EnqueueCommandRequest,
+): Promise<EnqueueCommandResponse> {
+  return apiFetch(`/dashboard/nodes/${encodeURIComponent(nodeId)}/commands`, token, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function fetchNodeCredentials(
   token: string | null,
   nodeId: string,
@@ -298,6 +333,31 @@ export function regenerateAgentKey(
   token: string | null,
 ): Promise<{ status: string; has_agent_key: boolean; message: string }> {
   return apiFetch("/dashboard/deployment/regenerate-agent-key", token, {
+    method: "POST",
+  });
+}
+
+export function fetchNodeTokenStatus(
+  token: string | null,
+  nodeId: string,
+): Promise<{ node_id: string; has_node_token: boolean; token_created_at?: string }> {
+  return apiFetch(`/dashboard/nodes/${encodeURIComponent(nodeId)}/token-status`, token);
+}
+
+export function regenerateNodeToken(
+  token: string | null,
+  nodeId: string,
+): Promise<{ status: string; node_id: string; node_token: string; message: string }> {
+  return apiFetch(`/dashboard/nodes/${encodeURIComponent(nodeId)}/regenerate-token`, token, {
+    method: "POST",
+  });
+}
+
+export function revokeNodeToken(
+  token: string | null,
+  nodeId: string,
+): Promise<{ status: string; node_id: string; message: string }> {
+  return apiFetch(`/dashboard/nodes/${encodeURIComponent(nodeId)}/revoke-token`, token, {
     method: "POST",
   });
 }

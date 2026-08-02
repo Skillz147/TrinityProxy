@@ -35,7 +35,8 @@ func staleCutoffSQL() string {
 
 const nodeSelectColumns = `id, ip, port, username, password, country, region, city, zip,
 	       platform, device_class, network_type,
-	       is_online, last_seen, created_at, updated_at, is_healthy, last_probe_at`
+	       is_online, last_seen, created_at, updated_at, is_healthy, last_probe_at,
+	       token_hash, token_created_at`
 
 type ProxyNode struct {
 	ID        string    `json:"id" db:"id"`
@@ -54,8 +55,11 @@ type ProxyNode struct {
 	LastSeen    time.Time  `json:"last_seen" db:"last_seen"`
 	CreatedAt   time.Time  `json:"created_at" db:"created_at"`
 	UpdatedAt   time.Time  `json:"updated_at" db:"updated_at"`
-	IsHealthy   bool       `json:"is_healthy" db:"is_healthy"`
-	LastProbeAt *time.Time `json:"last_probe_at,omitempty" db:"last_probe_at"`
+	IsHealthy       bool       `json:"is_healthy" db:"is_healthy"`
+	LastProbeAt     *time.Time `json:"last_probe_at,omitempty" db:"last_probe_at"`
+	TokenHash       string     `json:"-" db:"token_hash"`
+	TokenCreatedAt  *time.Time `json:"token_created_at,omitempty" db:"token_created_at"`
+	HasNodeToken    bool       `json:"has_node_token" db:"-"`
 }
 
 type NodeStorage struct {
@@ -63,7 +67,11 @@ type NodeStorage struct {
 }
 
 func NewNodeStorage(dbPath string) (*NodeStorage, error) {
-	db, err := sql.Open("sqlite3", dbPath)
+	dsn := dbPath
+	if !strings.Contains(dsn, "?") {
+		dsn += "?_journal_mode=WAL&_busy_timeout=5000"
+	}
+	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return nil, err
 	}
@@ -102,6 +110,9 @@ func (s *NodeStorage) createTables() error {
 	if err != nil {
 		return err
 	}
+	if err := s.createCommandsTable(); err != nil {
+		return err
+	}
 	return s.migrateSchema()
 }
 
@@ -112,7 +123,9 @@ func (s *NodeStorage) migrateSchema() error {
 		"device_class":  "TEXT",
 		"network_type":  "TEXT",
 		"last_probe_at": "DATETIME",
-		"is_healthy":    "BOOLEAN DEFAULT 0",
+		"is_healthy":        "BOOLEAN DEFAULT 0",
+		"token_hash":        "TEXT NOT NULL DEFAULT ''",
+		"token_created_at":  "DATETIME",
 	}
 	for name, def := range columns {
 		var count int
@@ -134,19 +147,28 @@ func (s *NodeStorage) migrateSchema() error {
 
 func scanNode(rows *sql.Rows) (ProxyNode, error) {
 	var node ProxyNode
-	var lastProbe sql.NullTime
+	var lastProbe, tokenCreated sql.NullTime
+	var tokenHash sql.NullString
 	err := rows.Scan(
 		&node.ID, &node.IP, &node.Port, &node.Username, &node.Password,
 		&node.Country, &node.Region, &node.City, &node.Zip,
 		&node.Platform, &node.DeviceClass, &node.NetworkType,
 		&node.IsOnline, &node.LastSeen, &node.CreatedAt, &node.UpdatedAt,
 		&node.IsHealthy, &lastProbe,
+		&tokenHash, &tokenCreated,
 	)
 	if err != nil {
 		return ProxyNode{}, err
 	}
 	if lastProbe.Valid {
 		node.LastProbeAt = &lastProbe.Time
+	}
+	if tokenHash.Valid {
+		node.TokenHash = tokenHash.String
+		node.HasNodeToken = tokenHash.String != ""
+	}
+	if tokenCreated.Valid {
+		node.TokenCreatedAt = &tokenCreated.Time
 	}
 	return node, nil
 }
@@ -194,13 +216,15 @@ func (s *NodeStorage) GetNodeByID(id string) (*ProxyNode, error) {
 
 	row := s.db.QueryRow(query, id)
 	var node ProxyNode
-	var lastProbe sql.NullTime
+	var lastProbe, tokenCreated sql.NullTime
+	var tokenHash sql.NullString
 	err := row.Scan(
 		&node.ID, &node.IP, &node.Port, &node.Username, &node.Password,
 		&node.Country, &node.Region, &node.City, &node.Zip,
 		&node.Platform, &node.DeviceClass, &node.NetworkType,
 		&node.IsOnline, &node.LastSeen, &node.CreatedAt, &node.UpdatedAt,
 		&node.IsHealthy, &lastProbe,
+		&tokenHash, &tokenCreated,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -210,6 +234,13 @@ func (s *NodeStorage) GetNodeByID(id string) (*ProxyNode, error) {
 	}
 	if lastProbe.Valid {
 		node.LastProbeAt = &lastProbe.Time
+	}
+	if tokenHash.Valid {
+		node.TokenHash = tokenHash.String
+		node.HasNodeToken = tokenHash.String != ""
+	}
+	if tokenCreated.Valid {
+		node.TokenCreatedAt = &tokenCreated.Time
 	}
 	return &node, nil
 }
@@ -319,6 +350,9 @@ func (s *NodeStorage) MarkOfflineNodes() error {
 }
 
 func (s *NodeStorage) DeleteNode(id string) error {
+	if err := s.ClearCommandsForNode(id); err != nil {
+		return err
+	}
 	result, err := s.db.Exec(`DELETE FROM proxy_nodes WHERE id = ?`, id)
 	if err != nil {
 		return err

@@ -84,6 +84,7 @@ func main() {
 			logutil.Fatal(log, "failed to ensure agent key", "err", err)
 		}
 		if agentKey != "" && cfg.AgentKey == "" {
+			fmt.Printf("TRINITY_ENROLLMENT_KEY=%s\n", agentKey)
 			fmt.Printf("TRINITY_AGENT_KEY=%s\n", agentKey)
 		}
 
@@ -202,6 +203,7 @@ func main() {
 		"stats", "GET /api/dashboard/stats",
 		"nodes", "GET /api/dashboard/nodes",
 		"delete_node", "DELETE /api/dashboard/nodes/{id}",
+		"node_commands", "POST /api/dashboard/nodes/{id}/commands",
 		"node_credentials", "GET /api/dashboard/nodes/{id}/credentials",
 		"bootstrap_script", "GET /api/dashboard/bootstrap-script",
 		"deploy_commands", "GET /api/dashboard/deploy-commands",

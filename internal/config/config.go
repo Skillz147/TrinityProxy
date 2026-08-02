@@ -20,17 +20,18 @@ const (
 
 // Config holds runtime settings loaded from environment variables.
 //
-// Agent key flow (each master deployment has its own key):
+// Agent key flow (per-node tokens):
 //
-//  1. Dashboard generates and persists agent_key in dashboard.db
+//  1. Dashboard generates and persists enrollment_key in dashboard.db
 //     (table dashboard_deployment, column agent_key).
-//  2. Controller API must receive the same value as TRINITY_AGENT_KEY so
-//     POST /api/heartbeat can validate agent heartbeats (cmd/api/enhanced_main.go).
-//  3. Agents export TRINITY_AGENT_KEY and send it via X-API-Key or
-//     Authorization: Bearer on every heartbeat.
-//  4. Bridge dashboard → controller: `make sync-agent-key` reads dashboard.db
-//     and writes .env.controller; source it or add TRINITY_AGENT_KEY to the
-//     controller systemd unit before starting trinityproxy-api.
+//  2. Controller API receives TRINITY_ENROLLMENT_KEY (or legacy TRINITY_AGENT_KEY)
+//     to validate first-time agent enrollment on POST /api/heartbeat.
+//  3. On first heartbeat, controller issues a unique node_token stored hashed in
+//     proxy_nodes.token_hash and returns it in the heartbeat response.
+//  4. Agents persist node_token locally and send it via Bearer / X-Agent-Token
+//     on subsequent heartbeats, command polls, and command results.
+//  5. Bridge dashboard → controller: `make sync-agent-key` writes enrollment key
+//     to .env.controller as TRINITY_ENROLLMENT_KEY.
 type Config struct {
 	ControllerURL     string
 	APIPort           int
@@ -38,14 +39,17 @@ type Config struct {
 	HeartbeatInterval time.Duration
 	ProbeInterval     time.Duration
 	APIKey            string
-	AgentKey          string
+	AgentKey          string // legacy TRINITY_AGENT_KEY (deprecated)
+	EnrollmentKey     string // TRINITY_ENROLLMENT_KEY
+	NodeToken         string // TRINITY_NODE_TOKEN (persisted per-node token)
 	APIBindAddr       string
 }
 
 // Load reads configuration from environment variables with sensible defaults.
 //
 // Env vars: CONTROLLER_URL, API_PORT, API_BIND_ADDR, DB_PATH, HEARTBEAT_INTERVAL, PROBE_INTERVAL,
-// TRINITY_API_KEY, TRINITY_AGENT_KEY, TRINITY_ENV (production|prod), TRINITY_NONINTERACTIVE
+// TRINITY_API_KEY, TRINITY_AGENT_KEY, TRINITY_ENROLLMENT_KEY, TRINITY_NODE_TOKEN,
+// TRINITY_ENV (production|prod), TRINITY_NONINTERACTIVE
 func Load() Config {
 	return Config{
 		ControllerURL:     envString("CONTROLLER_URL", defaultControllerURL),
@@ -55,6 +59,8 @@ func Load() Config {
 		ProbeInterval:     envDuration("PROBE_INTERVAL", defaultProbeInterval),
 		APIKey:            envString("TRINITY_API_KEY", ""),
 		AgentKey:          envString("TRINITY_AGENT_KEY", ""),
+		EnrollmentKey:     envString("TRINITY_ENROLLMENT_KEY", ""),
+		NodeToken:         envString("TRINITY_NODE_TOKEN", ""),
 		APIBindAddr:       envString("API_BIND_ADDR", defaultAPIBindAddr),
 	}
 }
@@ -69,6 +75,18 @@ func (c Config) HeartbeatURL() string {
 func (c Config) DeregisterURL() string {
 	base := strings.TrimRight(c.ControllerURL, "/")
 	return base + "/api/deregister"
+}
+
+// AgentCommandsURL returns the agent command poll endpoint.
+func (c Config) AgentCommandsURL() string {
+	base := strings.TrimRight(c.ControllerURL, "/")
+	return base + "/api/agent/commands"
+}
+
+// CommandResultURL returns the agent command result ACK endpoint.
+func (c Config) CommandResultURL() string {
+	base := strings.TrimRight(c.ControllerURL, "/")
+	return base + "/api/agent/command-result"
 }
 
 // ListenAddr returns the API server bind host:port (default 0.0.0.0:3100).
@@ -114,15 +132,24 @@ func (c Config) LogSecurityWarnings(log *slog.Logger) {
 	if log == nil {
 		log = slog.Default()
 	}
-	if c.AgentKey == "" {
+	enrollment := c.EnrollmentKey
+	if enrollment == "" {
+		enrollment = c.AgentKey
+	}
+	if enrollment == "" {
 		if c.IsProduction() {
-			log.Warn("TRINITY_AGENT_KEY unset — heartbeats are unauthenticated; generate in dashboard Settings, then run: make sync-agent-key")
+			log.Warn("TRINITY_ENROLLMENT_KEY unset — heartbeats are unauthenticated; generate in dashboard Settings, then run: make sync-agent-key")
 		} else {
-			log.Warn("TRINITY_AGENT_KEY unset — heartbeat auth disabled (dev mode)")
+			log.Warn("TRINITY_ENROLLMENT_KEY unset — heartbeat auth disabled (dev mode)")
 		}
+	} else if c.AgentKey != "" && c.EnrollmentKey == "" {
+		log.Warn("TRINITY_AGENT_KEY is deprecated — set TRINITY_ENROLLMENT_KEY on controller and use per-node tokens")
 	}
 	if c.APIKey == "" && c.IsProduction() {
 		log.Warn("TRINITY_API_KEY unset — client API endpoints are unauthenticated")
+	}
+	if c.IsProduction() && strings.HasPrefix(strings.ToLower(c.ControllerURL), "http://") {
+		log.Warn("CONTROLLER_URL uses HTTP — use HTTPS in production so agents cannot be MITM'd into executing injected remote commands")
 	}
 }
 

@@ -220,8 +220,10 @@ func logAgentEnv(log *slog.Logger, cfgControllerURL string) {
 	} else {
 		log.Warn("CONTROLLER_URL unset — heartbeats need a controller base URL")
 	}
-	if os.Getenv("TRINITY_AGENT_KEY") != "" {
-		log.Info("heartbeat auth enabled via TRINITY_AGENT_KEY")
+	if os.Getenv("TRINITY_ENROLLMENT_KEY") != "" || os.Getenv("TRINITY_NODE_TOKEN") != "" {
+		log.Info("heartbeat auth enabled via per-node or enrollment token")
+	} else if os.Getenv("TRINITY_AGENT_KEY") != "" {
+		log.Info("heartbeat auth enabled via deprecated TRINITY_AGENT_KEY — migrate to TRINITY_ENROLLMENT_KEY")
 	}
 }
 

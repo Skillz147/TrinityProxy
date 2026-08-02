@@ -5,11 +5,11 @@
 # runs as dedicated user "trinityproxy-agent".
 #
 # Non-interactive env (optional, injected into systemd unit):
-#   CONTROLLER_URL, TRINITY_AGENT_KEY, TRINITY_DEVICE_CLASS
+#   CONTROLLER_URL, TRINITY_ENROLLMENT_KEY (or legacy TRINITY_AGENT_KEY), TRINITY_DEVICE_CLASS
 #   TRINITY_LOG_LEVEL — quiet | silent | info | debug (default: info)
 #
 # Usage:
-#   sudo CONTROLLER_URL=http://controller:3100 TRINITY_AGENT_KEY=... ./scripts/install-agent-service.sh
+#   sudo CONTROLLER_URL=http://controller:3100 TRINITY_ENROLLMENT_KEY=... ./scripts/install-agent-service.sh
 
 set -euo pipefail
 
@@ -277,11 +277,13 @@ install_service_file() {
     log_debug "Installing systemd unit from $SERVICE_FILE to $SYSTEMD_PATH"
     sed -e "s|/root/TrinityProxy|$PROJECT_ROOT|g" "$SERVICE_FILE" > "$tmp"
 
-    awk -v url="${CONTROLLER_URL:-}" -v key="${TRINITY_AGENT_KEY:-}" -v devclass="${TRINITY_DEVICE_CLASS:-}" '
+    awk -v url="${CONTROLLER_URL:-}" -v enroll="${TRINITY_ENROLLMENT_KEY:-${TRINITY_AGENT_KEY:-}}" -v devclass="${TRINITY_DEVICE_CLASS:-}" '
         /Environment=TRINITY_NONINTERACTIVE=1/ {
             print
             if (url != "") print "Environment=CONTROLLER_URL=" url
-            if (key != "") print "Environment=TRINITY_AGENT_KEY=" key
+            if (enroll != "") {
+                print "Environment=TRINITY_ENROLLMENT_KEY=" enroll
+            }
             if (devclass != "") print "Environment=TRINITY_DEVICE_CLASS=" devclass
             next
         }
@@ -327,8 +329,10 @@ else
     log_warn "CONTROLLER_URL not set — configure in $SYSTEMD_PATH or export before install"
 fi
 
-if [[ -z "${TRINITY_AGENT_KEY:-}" ]]; then
-    log_warn "TRINITY_AGENT_KEY unset — heartbeats will be unauthenticated (dev mode)"
+if [[ -z "${TRINITY_ENROLLMENT_KEY:-}" && -z "${TRINITY_AGENT_KEY:-}" ]]; then
+    log_warn "TRINITY_ENROLLMENT_KEY unset — heartbeats will be unauthenticated (dev mode)"
+elif [[ -z "${TRINITY_ENROLLMENT_KEY:-}" && -n "${TRINITY_AGENT_KEY:-}" ]]; then
+    log_warn "TRINITY_AGENT_KEY is deprecated — use TRINITY_ENROLLMENT_KEY for new installs"
 fi
 
 if [[ -n "${TRINITY_DEVICE_CLASS:-}" ]]; then

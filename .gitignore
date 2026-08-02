@@ -50,3 +50,4 @@ temp/
 # Dashboard frontend
 web/dashboard/node_modules
 # web/dashboard/dist is committed for VPS installs without Node.js
+cmd/dashboard/dist/.ui-sync-stamp

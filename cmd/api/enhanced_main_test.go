@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Skillz147/TrinityProxy/internal/api"
+	"github.com/Skillz147/TrinityProxy/internal/auth"
 	"github.com/Skillz147/TrinityProxy/internal/health"
 	"github.com/Skillz147/TrinityProxy/internal/storage"
 )
@@ -29,6 +30,7 @@ type mockNodeStore struct {
 	nodes          []storage.ProxyNode
 	countryNodes   map[string][]storage.ProxyNode
 	lastUpsert     *storage.ProxyNode
+	tokenHashes    map[string]string
 }
 
 func (m *mockNodeStore) UpsertNode(node *storage.ProxyNode) error {
@@ -98,6 +100,49 @@ func (m *mockNodeStore) UpdateNodeHealth(id string, healthy bool, probedAt time.
 	return nil
 }
 
+func (m *mockNodeStore) GetNodeTokenHash(nodeID string) (string, error) {
+	if m.tokenHashes == nil {
+		return "", nil
+	}
+	return m.tokenHashes[nodeID], nil
+}
+
+func (m *mockNodeStore) IssueNodeToken(nodeID string) (string, error) {
+	token, err := auth.GenerateNodeToken()
+	if err != nil {
+		return "", err
+	}
+	if m.tokenHashes == nil {
+		m.tokenHashes = map[string]string{}
+	}
+	m.tokenHashes[nodeID] = auth.HashNodeToken(token)
+	return token, nil
+}
+
+func (m *mockNodeStore) RevokeNodeToken(nodeID string) error {
+	if m.tokenHashes != nil {
+		delete(m.tokenHashes, nodeID)
+	}
+	return nil
+}
+
+func (m *mockNodeStore) NodeHasToken(nodeID string) (bool, error) {
+	hash, err := m.GetNodeTokenHash(nodeID)
+	return hash != "", err
+}
+
+func (m *mockNodeStore) ValidateNodeToken(nodeID, token string) (bool, error) {
+	hash, err := m.GetNodeTokenHash(nodeID)
+	if err != nil || hash == "" {
+		return false, err
+	}
+	return auth.ValidNodeToken(token, hash), nil
+}
+
+func (m *mockNodeStore) ClearCommandsForNode(nodeID string) error {
+	return nil
+}
+
 func sampleNode(ip string, port int, country string) storage.ProxyNode {
 	now := time.Now()
 	return storage.ProxyNode{
@@ -153,7 +198,11 @@ func testProber() *health.Prober {
 
 func newTestServer(store storage.NodeStore) *APIServer {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return NewAPIServerWithStore(store, log, testProber())
+	server := NewAPIServerWithAuth(store, api.AgentAuthConfig{Log: log}, log, testProber())
+	if ts, ok := store.(storage.NodeTokenStore); ok {
+		server.tokens = ts
+	}
+	return server
 }
 
 func TestHandleHeartbeatSuccess(t *testing.T) {
@@ -169,8 +218,15 @@ func TestHandleHeartbeatSuccess(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
-	if rec.Body.String() != "ok" {
-		t.Fatalf("body = %q, want ok", rec.Body.String())
+	var hbResp struct {
+		Status          string `json:"status"`
+		PendingCommands []any  `json:"pending_commands"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &hbResp); err != nil {
+		t.Fatalf("decode heartbeat response: %v body=%s", err, rec.Body.String())
+	}
+	if hbResp.Status != "ok" {
+		t.Fatalf("status = %q, want ok", hbResp.Status)
 	}
 	if store.lastUpsert == nil {
 		t.Fatal("expected UpsertNode to be called")
@@ -522,6 +578,7 @@ func TestHandlerAuthMiddleware(t *testing.T) {
 		path       string
 		body       string
 		key        string
+		authHeader string // "agent" uses X-Agent-Token, default X-API-Key
 		expected   int
 		wantSubstr string
 	}{
@@ -546,11 +603,12 @@ func TestHandlerAuthMiddleware(t *testing.T) {
 			expected: http.StatusUnauthorized,
 		},
 		{
-			name:     "heartbeat with valid agent key",
+			name:     "heartbeat with enrollment key",
 			method:   http.MethodPost,
 			path:     "/api/heartbeat",
 			body:     `{"ip":"1.2.3.4","port":1080,"username":"u","password":"p","country":"US"}`,
 			key:      agentKey,
+			authHeader: "agent",
 			expected: http.StatusOK,
 		},
 		{
@@ -569,7 +627,10 @@ func TestHandlerAuthMiddleware(t *testing.T) {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/heartbeat", api.WithAPIKey(agentKey, "trinity-agent", server.handleHeartbeat))
+	agentAuth := api.AgentAuthConfig{EnrollmentKey: agentKey, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	authServer := NewAPIServerWithAuth(store, agentAuth, slog.New(slog.NewTextHandler(io.Discard, nil)), testProber())
+	authServer.tokens = store
+	mux.HandleFunc("/api/heartbeat", authServer.handleHeartbeat)
 	mux.HandleFunc("/api/nodes", api.WithAPIKey(apiKey, "trinity-api", server.handleGetNodes))
 	mux.HandleFunc("/api/nodes/admin", api.WithAPIKey(adminKey, "trinity-admin", server.handleGetNodesAdmin))
 	mux.HandleFunc("/api/nodes/country", api.WithAPIKey(apiKey, "trinity-api", server.handleGetNodesByCountry))
@@ -585,7 +646,11 @@ func TestHandlerAuthMiddleware(t *testing.T) {
 			}
 			req := httptest.NewRequest(tc.method, tc.path, body)
 			if tc.key != "" {
-				req.Header.Set("X-API-Key", tc.key)
+				if tc.authHeader == "agent" {
+					req.Header.Set("X-Agent-Token", tc.key)
+				} else {
+					req.Header.Set("X-API-Key", tc.key)
+				}
 			}
 			rec := httptest.NewRecorder()
 
@@ -594,7 +659,7 @@ func TestHandlerAuthMiddleware(t *testing.T) {
 			if rec.Code != tc.expected {
 				t.Fatalf("status = %d, want %d; body = %s", rec.Code, tc.expected, rec.Body.String())
 			}
-			if tc.expected == http.StatusUnauthorized && !strings.Contains(rec.Body.String(), "invalid or missing API key") {
+			if tc.expected == http.StatusUnauthorized && !strings.Contains(rec.Body.String(), "invalid or missing agent token") && !strings.Contains(rec.Body.String(), "invalid or missing API key") {
 				t.Fatalf("body = %q, want auth error message", rec.Body.String())
 			}
 		})
